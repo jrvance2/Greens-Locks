@@ -1,0 +1,146 @@
+openapi: 3.1.0
+info:
+  title: TheSportsDB API
+  description: A crowd-sourced sports database API providing metadata for sports, events, teams, and players.
+  version: 1.0.0
+servers:
+  - url: https://www.thesportsdb.com/api/v1/json/573088
+    description: TheSportsDB API Server with your API key
+paths:
+  /searchteams.php:
+    get:
+      operationId: searchTeams
+      summary: Search for teams by name
+      parameters:
+        - name: t
+          in: query
+          required: true
+          description: Team name to search for
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of teams matching the search criteria
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  teams:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        idTeam:
+                          type: string
+                        strTeam:
+                          type: string
+                        strTeamBadge:
+                          type: string
+  /searchplayers.php:
+    get:
+      operationId: searchPlayers
+      summary: Search for players by name
+      parameters:
+        - name: p
+          in: query
+          required: true
+          description: Player name to search for
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of players matching the search criteria
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  player:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        idPlayer:
+                          type: string
+                        strPlayer:
+                          type: string
+                        strTeam:
+                          type: string
+  /eventsnext.php:
+    get:
+      operationId: eventsNext
+      summary: Get next 5 events by team ID
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: Team ID to retrieve upcoming events
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of upcoming events for the specified team
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        idEvent:
+                          type: string
+                        strEvent:
+                          type: string
+                        dateEvent:
+                          type: string
+                          format: date
+  /eventshighlights.php:
+    get:
+      operationId: eventsHighlights
+      summary: Get latest event YouTube highlights
+      parameters:
+        - name: d
+          in: query
+          required: false
+          description: Date to retrieve highlights for (format: YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: s
+          in: query
+          required: false
+          description: Sport to filter highlights
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of event highlights
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  highlights:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        idEvent:
+                          type: string
+                        strEvent:
+                          type: string
+                        strVideo:
+                          type: string
+security:
+  - apiKeyAuth: []
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: query
+      name: apiKey
+      description: Your API key (already integrated in the server URL)
