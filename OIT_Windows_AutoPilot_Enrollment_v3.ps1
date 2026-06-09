@@ -142,7 +142,7 @@ $panel.BorderStyle = 'None'
 
 # ── Title row ─────────────────────────────────────────────────────────────────
 $Header = New-Object System.Windows.Forms.Label
-$Header.Text      = 'OIT Desktop — AutoPilot Enrollment'
+$Header.Text      = 'OIT Desktop - AutoPilot Enrollment'
 $Header.Location  = New-Object System.Drawing.Point(24, 18)
 $Header.Size      = New-Object System.Drawing.Size(560, 34)
 $Header.ForeColor = $textColor
@@ -162,7 +162,7 @@ $statusBadge.Size      = New-Object System.Drawing.Size(100, 32)
 $statusBadge.BackColor = [System.Drawing.Color]::FromArgb(209, 250, 229)  # emerald-100
 
 $StatusValue = New-Object System.Windows.Forms.Label
-$StatusValue.Text      = '● Ready'
+$StatusValue.Text      = '* Ready'
 $StatusValue.Location  = New-Object System.Drawing.Point(0, 0)
 $StatusValue.Size      = New-Object System.Drawing.Size(100, 32)
 $StatusValue.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
@@ -185,7 +185,7 @@ $Label2.ForeColor = $mutedColor
 $Label2.Font      = $fontCaps
 
 $UseCaseHelp = New-Object System.Windows.Forms.Label
-$UseCaseHelp.Text      = 'Individual  →  Azure AD Join          Shared  →  Shared (Azure Joined)'
+$UseCaseHelp.Text      = 'Individual  ->  Azure AD Join          Shared  ->  Shared (Azure Joined)'
 $UseCaseHelp.Location  = New-Object System.Drawing.Point(28, 122)
 $UseCaseHelp.Size      = New-Object System.Drawing.Size(560, 20)
 $UseCaseHelp.ForeColor = $mutedColor
@@ -400,37 +400,37 @@ function Set-Status {
     param([string]$Value)
     switch ($Value) {
         'Ready' {
-            $StatusValue.Text      = '● Ready'
+            $StatusValue.Text      = '* Ready'
             $StatusValue.ForeColor = $successColor
             $statusBadge.BackColor = [System.Drawing.Color]::FromArgb(209, 250, 229)
             $ProgressBar.MarqueeAnimationSpeed = 0
         }
         'Installing prerequisites' {
-            $StatusValue.Text      = '● Installing'
+            $StatusValue.Text      = '* Installing'
             $StatusValue.ForeColor = [System.Drawing.Color]::FromArgb(59, 130, 246)
             $statusBadge.BackColor = [System.Drawing.Color]::FromArgb(219, 234, 254)
             $ProgressBar.MarqueeAnimationSpeed = 30
         }
         'Registering device' {
-            $StatusValue.Text      = '● Registering'
+            $StatusValue.Text      = '* Registering'
             $StatusValue.ForeColor = [System.Drawing.Color]::FromArgb(59, 130, 246)
             $statusBadge.BackColor = [System.Drawing.Color]::FromArgb(219, 234, 254)
             $ProgressBar.MarqueeAnimationSpeed = 30
         }
         'Complete' {
-            $StatusValue.Text      = '● Complete'
+            $StatusValue.Text      = '* Complete'
             $StatusValue.ForeColor = $successColor
             $statusBadge.BackColor = [System.Drawing.Color]::FromArgb(209, 250, 229)
             $ProgressBar.MarqueeAnimationSpeed = 0
         }
         'Error' {
-            $StatusValue.Text      = '● Error'
+            $StatusValue.Text      = '* Error'
             $StatusValue.ForeColor = $errorColor
             $statusBadge.BackColor = [System.Drawing.Color]::FromArgb(254, 226, 226)
             $ProgressBar.MarqueeAnimationSpeed = 0
         }
         default {
-            $StatusValue.Text      = "● $Value"
+            $StatusValue.Text      = "* $Value"
             $StatusValue.ForeColor = [System.Drawing.Color]::FromArgb(59, 130, 246)
             $statusBadge.BackColor = [System.Drawing.Color]::FromArgb(219, 234, 254)
         }
@@ -449,17 +449,17 @@ function Refresh-GroupTags {
     $selected = $Area.Text
     $filter   = $SearchBox.Text.Trim()
     $Area.Items.Clear()
-    $matches = @($script:AllGroupTags | Where-Object {
+    $filteredTags = @($script:AllGroupTags | Where-Object {
         if ([string]::IsNullOrWhiteSpace($filter)) { $true } else { $_ -like "*$filter*" }
     })
-    foreach ($tag in $matches) { [void]$Area.Items.Add($tag) }
-    if ($selected -and $matches -contains $selected) { $Area.SelectedItem = $selected }
+    foreach ($tag in $filteredTags) { [void]$Area.Items.Add($tag) }
+    if ($selected -and $filteredTags -contains $selected) { $Area.SelectedItem = $selected }
 }
 
 function Update-Summary {
     if ($UseCase.SelectedItem -and $Area.SelectedItem) {
         $addGroup = Get-AddToGroupValue
-        $SummaryValue.Text      = "Use Case: $($UseCase.Text)     ·     Group Tag: $($Area.Text)     ·     AddToGroup: $addGroup"
+        $SummaryValue.Text      = "Use Case: $($UseCase.Text)     |     Group Tag: $($Area.Text)     |     AddToGroup: $addGroup"
         $SummaryValue.ForeColor = $textColor
         $CheckBox1.Enabled      = $true
     } else {
