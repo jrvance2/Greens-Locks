@@ -125,7 +125,8 @@ if ($PSScriptRoot) {
     $imgPath = Join-Path $PSScriptRoot 'OIT - MAIN.png'
     if (Test-Path $imgPath) { $UAimage.ImageLocation = $imgPath }
 }
-$UAimage.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+$UAimage.SizeMode   = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+$UAimage.BackColor  = $bgColor
 
 # ── Drop-shadow (offset dark panel behind card) ───────────────────────────────
 $shadow = New-Object System.Windows.Forms.Panel
@@ -587,9 +588,13 @@ Status:        Complete
 try {
     Refresh-GroupTags
     $SearchBox.Enabled = $false
-    Add-OutputBoxLine 'Ready.'
-    Add-OutputBoxLine "Log file: $script:LogPath"
-    [void]$form.ShowDialog()
+
+    $form.Add_Shown({
+        Add-OutputBoxLine 'Ready.'
+        Add-OutputBoxLine "Log file: $script:LogPath"
+    })
+
+    [System.Windows.Forms.Application]::Run($form)
 } catch {
     [System.Windows.Forms.MessageBox]::Show(
         $_.Exception.Message, 'Startup Error',
