@@ -75,7 +75,7 @@ $script:AllGroupTags = @(
     'UASYS'
 )
 $script:LastSummary = ''
-$script:LogFolder = Join-Path $env:ProgramData 'OIT\AutopilotLogs'
+$script:LogFolder = Join-Path ($env:ProgramData -replace '^$', $env:SystemDrive + '\ProgramData') 'OIT\AutopilotLogs'
 $null = New-Item -Path $script:LogFolder -ItemType Directory -Force -ErrorAction SilentlyContinue
 $script:LogPath = Join-Path $script:LogFolder ('Autopilot_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.log')
 
@@ -295,7 +295,7 @@ $Confirm.FlatAppearance.BorderSize = 0
 $Confirm.Enabled   = $false
 $Confirm.Cursor    = [System.Windows.Forms.Cursors]::Hand
 $Confirm.Add_MouseEnter({ if ($Confirm.Enabled) { $Confirm.BackColor = $primaryHover } })
-$Confirm.Add_MouseLeave({ $Confirm.BackColor = if ($Confirm.Enabled) { $primaryColor } else { $primaryColor } })
+$Confirm.Add_MouseLeave({ $Confirm.BackColor = $primaryColor })
 
 $CopySummary = New-Object System.Windows.Forms.Button
 $CopySummary.Text      = 'Copy Summary'
@@ -496,92 +496,200 @@ $CheckBox1.Add_CheckedChanged({
 })
 
 $CopySummary.Add_Click({
-    if (-not [string]::IsNullOrWhiteSpace($script:LastSummary)) {
-        [System.Windows.Forms.Clipboard]::SetText($script:LastSummary)
+    $text = if ($script:syncHash) { $script:syncHash.LastSummary } else { $script:LastSummary }
+    if (-not [string]::IsNullOrWhiteSpace($text)) {
+        [System.Windows.Forms.Clipboard]::SetText($text)
         Add-OutputBoxLine 'Summary copied to clipboard.'
     }
 })
 
 $Confirm.Add_Click({
-    try {
-        if (-not $UseCase.SelectedItem -or -not $Area.SelectedItem) {
-            throw 'Select both Use Case and Group Tag before continuing.'
+    if (-not $UseCase.SelectedItem -or -not $Area.SelectedItem) {
+        [System.Windows.Forms.MessageBox]::Show(
+            'Select both Use Case and Group Tag before continuing.',
+            'Validation', [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        ) | Out-Null
+        return
+    }
+
+    $UseCase_Text = $UseCase.Text
+    $Area_Text    = $Area.Text
+    $AddToGroup   = Get-AddToGroupValue
+
+    $finalPrompt = "Use Case: $UseCase_Text`r`nGroup Tag: $Area_Text`r`nAddToGroup: $AddToGroup`r`n`r`nThe device will reboot when enrollment completes.`r`n`r`nContinue?"
+    $result = [System.Windows.Forms.MessageBox]::Show(
+        $finalPrompt, 'Confirm Enrollment',
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question
+    )
+    if ($result -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+    $Confirm.Enabled    = $false
+    $CheckBox1.Enabled  = $false
+    $Area.Enabled       = $false
+    $UseCase.Enabled    = $false
+    $SearchBox.Enabled  = $false
+    Set-Status 'Installing prerequisites'
+
+    Add-OutputBoxLine 'Started'
+    Add-OutputBoxLine "Use Case          = $UseCase_Text"
+    Add-OutputBoxLine "Group Tag         = $Area_Text"
+    Add-OutputBoxLine "AddToGroup        = $AddToGroup"
+    Add-OutputBoxLine 'Assigned User     = Not set by this tool'
+    Add-OutputBoxLine "Log File          = $script:LogPath"
+    Add-OutputBoxLine '----------------------------------------'
+
+    # Capture variables for the background runspace
+    $logPath      = $script:LogPath
+    $syncHash     = [hashtable]::Synchronized(@{
+        Form        = $form
+        Outputbox   = $outputbox
+        StatusValue = $StatusValue
+        StatusBadge = $statusBadge
+        ProgressBar = $ProgressBar
+        CopySummary = $CopySummary
+        CheckBox1   = $CheckBox1
+        Area        = $Area
+        UseCase     = $UseCase
+        SearchBox   = $SearchBox
+        Confirm     = $Confirm
+        LogPath     = $logPath
+        UseCase_Text= $UseCase_Text
+        Area_Text   = $Area_Text
+        AddToGroup  = $AddToGroup
+        SuccessColor= $successColor
+        ErrorColor  = $errorColor
+        PrimaryColor= $primaryColor
+        LastSummary = ''
+        Done        = $false
+    })
+
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.ApartmentState = 'STA'
+    $rs.ThreadOptions  = 'ReuseThread'
+    $rs.Open()
+    $rs.SessionStateProxy.SetVariable('syncHash', $syncHash)
+
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript({
+        function Sync-UI {
+            param([scriptblock]$Action)
+            $syncHash.Form.Invoke([Action]$Action)
         }
 
-        $UseCase_Text = $UseCase.Text
-        $Area_Text    = $Area.Text
-        $AddToGroup   = Get-AddToGroupValue
-
-        $finalPrompt = "Use Case: $UseCase_Text`r`nGroup Tag: $Area_Text`r`nAddToGroup: $AddToGroup`r`n`r`nThe device will reboot when enrollment completes.`r`n`r`nContinue?"
-        $result = [System.Windows.Forms.MessageBox]::Show(
-            $finalPrompt, 'Confirm Enrollment',
-            [System.Windows.Forms.MessageBoxButtons]::YesNo,
-            [System.Windows.Forms.MessageBoxIcon]::Question
-        )
-        if ($result -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-
-        $Confirm.Enabled    = $false
-        $CheckBox1.Enabled  = $false
-        $Area.Enabled       = $false
-        $UseCase.Enabled    = $false
-        $SearchBox.Enabled  = $false
-        Set-Status 'Installing prerequisites'
-
-        Add-OutputBoxLine 'Started'
-        Add-OutputBoxLine "Use Case          = $UseCase_Text"
-        Add-OutputBoxLine "Group Tag         = $Area_Text"
-        Add-OutputBoxLine "AddToGroup        = $AddToGroup"
-        Add-OutputBoxLine 'Assigned User     = Not set by this tool'
-        Add-OutputBoxLine "Log File          = $script:LogPath"
-        Add-OutputBoxLine '----------------------------------------'
-
-        Install-PackageProvider -Name NuGet -Force | Out-Null
-        Add-OutputBoxLine 'NuGet provider installed'
-
-        Install-Script Get-WindowsAutopilotInfo -Force | Out-Null
-        Add-OutputBoxLine 'Get-WindowsAutopilotInfo installed/updated'
-
-        Set-Status 'Registering device'
-        $Enrollment = Get-WindowsAutoPilotInfo.ps1 -GroupTag $Area_Text -Online -AddToGroup $AddToGroup -Assign 2>&1
-        if ($Enrollment) {
-            foreach ($line in $Enrollment) { Add-OutputBoxLine ([string]$line) }
+        function Write-Log {
+            param($Message)
+            $line = '[{0}] {1}' -f (Get-Date -Format s), $Message
+            Add-Content -LiteralPath $syncHash.LogPath -Value $line
+            Sync-UI {
+                $syncHash.Outputbox.SelectionStart  = $syncHash.Outputbox.TextLength
+                $syncHash.Outputbox.SelectionLength = 0
+                if ($Message -like 'ERROR*') {
+                    $syncHash.Outputbox.SelectionColor = [System.Drawing.Color]::FromArgb(252,165,165)
+                } elseif ($Message -match '(completed|installed|updated|Ready)') {
+                    $syncHash.Outputbox.SelectionColor = [System.Drawing.Color]::FromArgb(110,231,183)
+                } elseif ($Message -like '---*') {
+                    $syncHash.Outputbox.SelectionColor = [System.Drawing.Color]::FromArgb(51,65,85)
+                } else {
+                    $syncHash.Outputbox.SelectionColor = [System.Drawing.Color]::FromArgb(148,163,184)
+                }
+                $syncHash.Outputbox.AppendText("$line`r`n")
+                $syncHash.Outputbox.ScrollToCaret()
+            }
         }
 
-        Set-Status 'Complete'
-        Add-OutputBoxLine 'Enrollment completed'
+        function Set-UIStatus {
+            param([string]$Value)
+            Sync-UI {
+                switch ($Value) {
+                    'Installing prerequisites' {
+                        $syncHash.StatusValue.Text      = '* Installing'
+                        $syncHash.StatusValue.ForeColor = [System.Drawing.Color]::FromArgb(59,130,246)
+                        $syncHash.StatusBadge.BackColor = [System.Drawing.Color]::FromArgb(219,234,254)
+                        $syncHash.ProgressBar.MarqueeAnimationSpeed = 30
+                    }
+                    'Registering device' {
+                        $syncHash.StatusValue.Text      = '* Registering'
+                        $syncHash.StatusValue.ForeColor = [System.Drawing.Color]::FromArgb(59,130,246)
+                        $syncHash.StatusBadge.BackColor = [System.Drawing.Color]::FromArgb(219,234,254)
+                        $syncHash.ProgressBar.MarqueeAnimationSpeed = 30
+                    }
+                    'Complete' {
+                        $syncHash.StatusValue.Text      = '* Complete'
+                        $syncHash.StatusValue.ForeColor = $syncHash.SuccessColor
+                        $syncHash.StatusBadge.BackColor = [System.Drawing.Color]::FromArgb(209,250,229)
+                        $syncHash.ProgressBar.MarqueeAnimationSpeed = 0
+                    }
+                    'Error' {
+                        $syncHash.StatusValue.Text      = '* Error'
+                        $syncHash.StatusValue.ForeColor = $syncHash.ErrorColor
+                        $syncHash.StatusBadge.BackColor = [System.Drawing.Color]::FromArgb(254,226,226)
+                        $syncHash.ProgressBar.MarqueeAnimationSpeed = 0
+                    }
+                }
+            }
+        }
 
-        $script:LastSummary = @"
+        try {
+            Install-PackageProvider -Name NuGet -Force | Out-Null
+            Write-Log 'NuGet provider installed'
+
+            Install-Script Get-WindowsAutopilotInfo -Force | Out-Null
+            Write-Log 'Get-WindowsAutopilotInfo installed/updated'
+
+            Set-UIStatus 'Registering device'
+            $autopilotScript = (Get-Command 'Get-WindowsAutoPilotInfo.ps1' -ErrorAction Stop).Source
+            $enrollment = & $autopilotScript -GroupTag $syncHash.Area_Text -Online -AddToGroup $syncHash.AddToGroup -Assign 2>&1
+            if ($enrollment) { foreach ($l in $enrollment) { Write-Log ([string]$l) } }
+
+            Set-UIStatus 'Complete'
+            Write-Log 'Enrollment completed'
+
+            $syncHash.LastSummary = @"
 Timestamp:     $(Get-Date -Format s)
-Use Case:      $UseCase_Text
-Group Tag:     $Area_Text
-AddToGroup:    $AddToGroup
+Use Case:      $($syncHash.UseCase_Text)
+Group Tag:     $($syncHash.Area_Text)
+AddToGroup:    $($syncHash.AddToGroup)
 Assigned User: Not set by this tool
-Log File:      $script:LogPath
+Log File:      $($syncHash.LogPath)
 Status:        Complete
 "@
-        $CopySummary.Enabled = $true
+            Sync-UI { $syncHash.CopySummary.Enabled = $true }
 
-        [void][System.Windows.Forms.MessageBox]::Show(
-            'Enrollment is finished. Click OK to reboot.',
-            'Reboot', [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::None
-        )
-        Restart-Computer -Force
-    }
-    catch {
-        Set-Status 'Error'
-        Add-OutputBoxLine "ERROR: $($_.Exception.Message)"
-        [System.Windows.Forms.MessageBox]::Show(
-            $_.Exception.Message, 'Autopilot Enrollment Error',
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        ) | Out-Null
-        $CheckBox1.Enabled = $true
-        $Area.Enabled      = $true
-        $UseCase.Enabled   = $true
-        $SearchBox.Enabled = $true
-        $Confirm.Enabled   = [bool]$CheckBox1.Checked
-    }
+            Sync-UI {
+                [void][System.Windows.Forms.MessageBox]::Show(
+                    'Enrollment is finished. Click OK to reboot.',
+                    'Reboot', [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::None
+                )
+            }
+            Restart-Computer -Force
+        }
+        catch {
+            $errMsg = $_.Exception.Message
+            Set-UIStatus 'Error'
+            Write-Log "ERROR: $errMsg"
+            Sync-UI {
+                [System.Windows.Forms.MessageBox]::Show(
+                    $errMsg, 'Autopilot Enrollment Error',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                ) | Out-Null
+                $syncHash.CheckBox1.Enabled = $true
+                $syncHash.Area.Enabled      = $true
+                $syncHash.UseCase.Enabled   = $true
+                $syncHash.SearchBox.Enabled = $true
+                $syncHash.Confirm.Enabled   = [bool]$syncHash.CheckBox1.Checked
+            }
+        }
+        finally {
+            $syncHash.Done = $true
+        }
+    })
+
+    [void]$ps.BeginInvoke()
 })
 
 # ── Init ──────────────────────────────────────────────────────────────────────
