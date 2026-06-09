@@ -110,16 +110,20 @@ $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox     = $false
 $form.Font            = $fontUI
 
-$iconPath = Join-Path $PSScriptRoot 'A-Square-Logo-4c_Official.ico'
-if (Test-Path $iconPath) { $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath) }
+if ($PSScriptRoot) {
+    $iconPath = Join-Path $PSScriptRoot 'A-Square-Logo-4c_Official.ico'
+    if (Test-Path $iconPath) { $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath) }
+}
 
 # ── Header image ──────────────────────────────────────────────────────────────
 $UAimage = New-Object System.Windows.Forms.PictureBox
 $UAimage.Width    = 740
 $UAimage.Height   = 155
 $UAimage.Location = New-Object System.Drawing.Point(0, 0)
-$imgPath = Join-Path $PSScriptRoot 'OIT - MAIN.png'
-if (Test-Path $imgPath) { $UAimage.ImageLocation = $imgPath }
+if ($PSScriptRoot) {
+    $imgPath = Join-Path $PSScriptRoot 'OIT - MAIN.png'
+    if (Test-Path $imgPath) { $UAimage.ImageLocation = $imgPath }
+}
 $UAimage.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
 
 # ── Drop-shadow (offset dark panel behind card) ───────────────────────────────
