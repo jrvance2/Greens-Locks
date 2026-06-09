@@ -29,7 +29,8 @@ function Test-Admin {
 
 if ((Test-Admin) -eq $false) {
     if (-not $Elevated) {
-        Start-Process -FilePath $myinvocation.MyCommand.Definition -Verb RunAs -ArgumentList '-elevated'
+        $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        Start-Process -FilePath $exePath -Verb RunAs -ArgumentList '-elevated'
     }
     Exit
 }
@@ -583,8 +584,16 @@ Status:        Complete
 })
 
 # ── Init ──────────────────────────────────────────────────────────────────────
-Refresh-GroupTags
-$SearchBox.Enabled = $false
-Add-OutputBoxLine 'Ready.'
-Add-OutputBoxLine "Log file: $script:LogPath"
-[void]$form.ShowDialog()
+try {
+    Refresh-GroupTags
+    $SearchBox.Enabled = $false
+    Add-OutputBoxLine 'Ready.'
+    Add-OutputBoxLine "Log file: $script:LogPath"
+    [void]$form.ShowDialog()
+} catch {
+    [System.Windows.Forms.MessageBox]::Show(
+        $_.Exception.Message, 'Startup Error',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Error
+    ) | Out-Null
+}
