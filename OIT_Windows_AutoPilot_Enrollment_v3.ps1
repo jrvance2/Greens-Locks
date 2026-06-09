@@ -29,7 +29,7 @@ function Test-Admin {
 
 if ((Test-Admin) -eq $false) {
     if (-not $Elevated) {
-        Start-Process powershell.exe -Verb RunAs -ArgumentList ('-noprofile -ExecutionPolicy bypass -file "{0}" -elevated' -f ($myinvocation.MyCommand.Definition))
+        Start-Process -FilePath $myinvocation.MyCommand.Definition -Verb RunAs -ArgumentList '-elevated'
     }
     Exit
 }
