@@ -7,17 +7,17 @@
     msiexec /x against its product code. Looking the code up at run time means the script keeps
     working across Duo versions, since each release has a different product code.
 
-    SCCM uninstall command line:
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Uninstall-Duo.ps1
+    Usage:
+        - SCCM console > Software Library > Scripts > Create Script, paste this file, approve it,
+          then right-click a device or collection > Run Script. No parameters are needed.
+        - Or locally from an elevated prompt:
+              powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Uninstall-Duo.ps1
 
-    Exit codes (return 0 / 3010 as success and 1641 as soft/hard reboot in the SCCM deployment type):
+    Exit codes:
         0     Success, or Duo is not installed
         3010  Success, reboot required
         1641  Success, reboot initiated
         other msiexec error code (log is written to the path below)
-
-    Detection rule for the deployment type (uninstall detection): Duo no longer present, or use the
-    same registry/MSI detection as the install and let SCCM invert it.
 #>
 
 [CmdletBinding()]
@@ -32,7 +32,9 @@ $log = Join-Path $LogDir 'Duo_Uninstall.log'
 
 function Write-Log {
     param([string]$Message)
-    "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message | Add-Content -Path $log
+    $line = "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+    $line | Add-Content -Path $log
+    Write-Output $line   # shows in the SCCM Run Scripts results
 }
 
 $keys = @(
