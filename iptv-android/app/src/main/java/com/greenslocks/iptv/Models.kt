@@ -13,6 +13,9 @@ data class Entry(
     val icon: String = "",
     val num: Int = 0,
     val cat: String = "",
+    val season: Int = 0,
+    /** For episodes: the series title, so history can show "Show - S1 E2". */
+    val parent: String = "",
 )
 
 data class Detail(val plot: String, val meta: String, val poster: String)
@@ -25,7 +28,7 @@ private const val SEP = "\u0001"
 fun Entry.key(): String = "${kind.name}:$id"
 
 fun Entry.encode(): String =
-    listOf(kind.name, id, ext, title, icon, num.toString(), cat).joinToString(SEP)
+    listOf(kind.name, id, ext, title, icon, num.toString(), cat, season.toString(), parent).joinToString(SEP)
 
 fun decodeEntry(s: String): Entry? {
     val p = s.split(SEP)
@@ -36,6 +39,8 @@ fun decodeEntry(s: String): Entry? {
         icon = p.getOrElse(4) { "" },
         num = p.getOrNull(5)?.toIntOrNull() ?: 0,
         cat = p.getOrElse(6) { "" },
+        season = p.getOrNull(7)?.toIntOrNull() ?: 0,
+        parent = p.getOrElse(8) { "" },
     )
 }
 

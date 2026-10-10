@@ -5,6 +5,7 @@ data class Channel(
     val url: String,
     val group: String,
     val tvgId: String = "",
+    val logo: String = "",
 )
 
 data class Playlist(val channels: List<Channel>, val epgUrl: String?)
@@ -23,6 +24,7 @@ object M3uParser {
         var name: String? = null
         var group = ""
         var tvgId = ""
+        var logo = ""
         for (raw in lines) {
             val line = raw.trim()
             when {
@@ -35,17 +37,19 @@ object M3uParser {
                     val attrs = attr.findAll(line).associate { it.groupValues[1] to it.groupValues[2] }
                     group = attrs["group-title"].orEmpty()
                     tvgId = attrs["tvg-id"].orEmpty()
+                    logo = attrs["tvg-logo"].orEmpty()
                     name = line.substringAfterLast(',', "").trim()
                         .ifEmpty { attrs["tvg-name"].orEmpty() }
                 }
                 line.isNotEmpty() && !line.startsWith("#") -> {
                     if (!line.contains("/movie/") && !line.contains("/series/")) {
                         val g = group.ifEmpty { "Other" }
-                        out += Channel(name?.ifEmpty { null } ?: line, line, groups.getOrPut(g) { g }, tvgId)
+                        out += Channel(name?.ifEmpty { null } ?: line, line, groups.getOrPut(g) { g }, tvgId, logo)
                     }
                     name = null
                     group = ""
                     tvgId = ""
+                    logo = ""
                 }
             }
         }

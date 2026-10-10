@@ -1,7 +1,11 @@
 package com.greenslocks.iptv
 
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -66,21 +70,21 @@ fun GuideScreen(
         guide.cache[ch.id].orEmpty().any { it.title.contains(query, ignoreCase = true) }
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    Column(Modifier.fillMaxSize().background(Palette.bg).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("TV Guide", style = MaterialTheme.typography.titleLarge)
+            Text("TV Guide", style = MaterialTheme.typography.headlineSmall, color = Palette.accent)
             Spacer(Modifier.width(16.dp))
             OutlinedTextField(
                 value = query, onValueChange = { query = it }, singleLine = true,
                 label = { Text("Find a programme") }, modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(8.dp))
-            Button(onClick = onClose) { Text("Close") }
+            ActionButton("Close", primary = false, onClick = onClose)
         }
         Row(Modifier.fillMaxWidth().padding(start = CHANNEL_COL).horizontalScroll(hs)) {
             for (i in 0 until (WINDOW / HALF_HOUR).toInt()) {
                 Box(Modifier.width(msToDp(HALF_HOUR))) {
-                    Text(hhmm(windowStart + i * HALF_HOUR), style = MaterialTheme.typography.labelMedium)
+                    Text(hhmm(windowStart + i * HALF_HOUR), style = MaterialTheme.typography.labelMedium, color = Palette.muted)
                 }
             }
         }
@@ -114,8 +118,15 @@ private fun GuideRow(
 ) {
     val end = windowStart + WINDOW
     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(CHANNEL_COL).height(56.dp)) {
-            ListRow(name, "", selected = false, modifier = firstFocus.fillMaxSize()) { onPlay() }
+        Box(Modifier.width(CHANNEL_COL).height(56.dp).padding(end = 4.dp)) {
+            FocusCard(firstFocus.fillMaxSize(), RoundedCornerShape(8.dp), 1.0f, 2.dp, onClick = onPlay) { focused ->
+                Row(
+                    Modifier.fillMaxSize()
+                        .background(if (focused) Palette.accent.copy(alpha = 0.25f) else Palette.surface)
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) { Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge) }
+            }
         }
         Row(Modifier.weight(1f).horizontalScroll(hs)) {
             if (programmes == null) {

@@ -151,7 +151,11 @@ class XtreamProvider(
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
                 val label = "S$season E${o.optInt("episode_num")}  ${o.optString("title")}"
-                out += Entry(Kind.EPISODE, o.optString("id"), label, o.optString("container_extension").ifEmpty { "mp4" })
+                out += Entry(
+                    Kind.EPISODE, o.optString("id"), label,
+                    o.optString("container_extension").ifEmpty { "mp4" },
+                    icon = series.icon, season = season.toIntOrNull() ?: 0, parent = series.title,
+                )
             }
         }
         return out
@@ -187,11 +191,11 @@ class M3uProvider(private val channels: List<Channel>) : Provider {
         else emptyList()
 
     override suspend fun entries(kind: Kind, category: Category): List<Entry> =
-        if (kind == Kind.LIVE) channels.filter { it.group == category.id }.map { Entry(Kind.LIVE, it.url, it.name, cat = it.group) }
+        if (kind == Kind.LIVE) channels.filter { it.group == category.id }.map { Entry(Kind.LIVE, it.url, it.name, icon = it.logo, cat = it.group) }
         else emptyList()
 
     override suspend fun allLive(): List<Entry> =
-        channels.mapIndexed { i, c -> Entry(Kind.LIVE, c.url, c.name, num = i + 1, cat = c.group) }
+        channels.mapIndexed { i, c -> Entry(Kind.LIVE, c.url, c.name, icon = c.logo, num = i + 1, cat = c.group) }
 
     override suspend fun detail(entry: Entry): Detail? = null
     override suspend fun episodes(series: Entry): List<Entry> = emptyList()

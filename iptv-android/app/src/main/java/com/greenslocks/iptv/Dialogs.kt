@@ -1,5 +1,6 @@
 package com.greenslocks.iptv
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -10,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.delay
@@ -33,16 +35,17 @@ fun ActionMenuDialog(title: String, items: List<MenuItem>, onDismiss: () -> Unit
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(100); runCatching { first.requestFocus() } }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
+        Surface(shape = RoundedCornerShape(18.dp), color = Palette.surface, tonalElevation = 0.dp) {
             Column(Modifier.padding(16.dp).widthIn(min = 320.dp, max = 520.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                     items.forEachIndexed { i, item ->
-                        TextButton(
-                            onClick = { item.action(); if (item.close) onDismiss() },
-                            enabled = item.enabled,
-                            modifier = (if (i == 0) Modifier.focusRequester(first) else Modifier).fillMaxWidth(),
-                        ) { Text(item.label, Modifier.fillMaxWidth()) }
+                        ListRow(
+                            item.label, "", selected = false,
+                            modifier = (if (i == 0) Modifier.focusRequester(first) else Modifier).padding(vertical = 2.dp),
+                        ) {
+                            if (item.enabled) { item.action(); if (item.close) onDismiss() }
+                        }
                     }
                 }
             }
@@ -64,8 +67,8 @@ fun TextPromptDialog(prompt: TextPrompt, onDismiss: () -> Unit) {
                 modifier = Modifier.focusRequester(focus),
             )
         },
-        confirmButton = { TextButton(onClick = { prompt.onDone(value); onDismiss() }) { Text("OK") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = { ActionButton("OK", onClick = { prompt.onDone(value); onDismiss() }) },
+        dismissButton = { ActionButton("Cancel", primary = false, onClick = onDismiss) },
     )
 }
 
@@ -76,7 +79,7 @@ fun PinPadDialog(title: String, error: String?, onDone: (String) -> Unit, onCanc
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(100); runCatching { first.requestFocus() } }
     Dialog(onDismissRequest = onCancel) {
-        Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
+        Surface(shape = RoundedCornerShape(18.dp), color = Palette.surface, tonalElevation = 0.dp) {
             Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -92,10 +95,13 @@ fun PinPadDialog(title: String, error: String?, onDone: (String) -> Unit, onCanc
                 rows.forEachIndexed { r, row ->
                     Row {
                         row.forEachIndexed { c, label ->
-                            Button(
+                            FocusCard(
+                                Modifier.padding(4.dp).width(92.dp)
+                                    .then(if (r == 0 && c == 0) Modifier.focusRequester(first) else Modifier),
+                                RoundedCornerShape(10.dp), 1.06f, 2.dp,
                                 onClick = {
                                     when (label) {
-                                        "⌫" -> digits = digits.dropLast(1)
+                                        "\u232B" -> digits = digits.dropLast(1)
                                         "Cancel" -> onCancel()
                                         else -> if (digits.length < 4) {
                                             digits += label
@@ -103,9 +109,12 @@ fun PinPadDialog(title: String, error: String?, onDone: (String) -> Unit, onCanc
                                         }
                                     }
                                 },
-                                modifier = Modifier.padding(4.dp).width(96.dp)
-                                    .then(if (r == 0 && c == 0) Modifier.focusRequester(first) else Modifier),
-                            ) { Text(label) }
+                            ) {
+                                Text(
+                                    label, Modifier.fillMaxWidth().background(Palette.surfaceHi).padding(vertical = 12.dp),
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
                         }
                     }
                 }
