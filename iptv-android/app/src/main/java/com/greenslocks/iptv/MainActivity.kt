@@ -36,6 +36,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -245,9 +246,15 @@ private fun App() {
     var profiles by remember { mutableStateOf(store.profiles()) }
     var activeProfile by remember { mutableIntStateOf(store.active) }
     var urlText by remember { mutableStateOf(store.url()) }
+    val initial = remember { xtreamFromUrl(urlText) }
+    var server by remember { mutableStateOf(initial?.base.orEmpty()) }
+    var user by remember { mutableStateOf(initial?.user.orEmpty()) }
+    var pass by remember { mutableStateOf(initial?.pass.orEmpty()) }
+    var useUrl by remember { mutableStateOf(urlText.isNotBlank() && initial == null) }
+    var showPass by remember { mutableStateOf(false) }
     var provider by remember { mutableStateOf<Provider?>(null) }
     var showSetup by remember { mutableStateOf(true) }
-    var status by remember { mutableStateOf("Paste your playlist URL and press Connect") }
+    var status by remember { mutableStateOf("Enter your login and press Connect") }
     var busy by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(Tab.LIVE) }
     val catCache = remember { mutableStateMapOf<Tab, List<Category>>() }
@@ -420,7 +427,20 @@ private fun App() {
         detailEntry = null; detail = null; allLive = null; query = ""
     }
 
+    fun syncFields() {
+        val x = xtreamFromUrl(urlText)
+        server = x?.base.orEmpty(); user = x?.user.orEmpty(); pass = x?.pass.orEmpty()
+        useUrl = x == null && urlText.isNotBlank()
+    }
+
     fun connect() {
+        if (!useUrl) {
+            if (server.isBlank() || user.isBlank() || pass.isEmpty()) {
+                status = "Enter server, username and password"
+                return
+            }
+            urlText = buildXtreamUrl(server, user, pass)
+        }
         store.setUrl(urlText)
         launchLoad {
             status = "Connecting…"
@@ -440,6 +460,7 @@ private fun App() {
 
     fun loadProfileState() {
         urlText = store.url()
+        syncFields()
         favorites = store.favorites()
         history = store.list("hist")
         hiddenCats = store.list("hidCats").toSet()
@@ -803,14 +824,41 @@ private fun App() {
     // ---- main UI
     val browser: @Composable ColumnScope.() -> Unit = {
         if (showSetup || provider == null) {
-            Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = urlText, onValueChange = { urlText = it },
-                    label = { Text("Playlist URL") }, singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = ::connect) { Text("Connect") }
+            Column(Modifier.padding(vertical = 8.dp)) {
+                if (useUrl) {
+                    OutlinedTextField(
+                        value = urlText, onValueChange = { urlText = it },
+                        label = { Text("Playlist URL") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = server, onValueChange = { server = it },
+                        label = { Text("Server (e.g. http://host:port)") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = user, onValueChange = { user = it },
+                        label = { Text("Username") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    )
+                    OutlinedTextField(
+                        value = pass, onValueChange = { pass = it },
+                        label = { Text("Password") }, singleLine = true,
+                        visualTransformation = if (showPass) androidx.compose.ui.text.input.VisualTransformation.None
+                        else PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = ::connect) { Text("Connect") }
+                    if (!useUrl) {
+                        TextButton(onClick = { showPass = !showPass }) { Text(if (showPass) "Hide password" else "Show password") }
+                    }
+                    TextButton(onClick = { useUrl = !useUrl }) {
+                        Text(if (useUrl) "Use username/password" else "Use playlist URL")
+                    }
+                }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -819,7 +867,7 @@ private fun App() {
                 style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f),
             )
             if (!showSetup && provider != null) {
-                TextButton(onClick = { showSetup = true }) { Text("URL") }
+                TextButton(onClick = { showSetup = true }) { Text("Login") }
             }
             TextButton(onClick = ::openSettings) { Text("⚙ Settings") }
         }

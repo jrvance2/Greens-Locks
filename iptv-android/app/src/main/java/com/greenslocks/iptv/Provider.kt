@@ -37,9 +37,9 @@ private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 
 /** Xtream-style panel API (player_api.php). Never downloads the whole library at once. */
 class XtreamProvider(
-    private val base: String,
-    private val user: String,
-    private val pass: String,
+    val base: String,
+    val user: String,
+    val pass: String,
 ) : Provider {
     override val supportsVod = true
 
@@ -212,6 +212,13 @@ fun xtreamFromUrl(input: String): XtreamProvider? {
     val pass = params["password"]
     if (user.isNullOrBlank() || pass.isNullOrBlank() || uri.scheme == null || uri.authority == null) return null
     return XtreamProvider("${uri.scheme}://${uri.authority}${path.substringBeforeLast('/')}", user, pass)
+}
+
+/** Builds the standard playlist URL from separate login fields; the app stores it encrypted. */
+fun buildXtreamUrl(server: String, user: String, pass: String): String {
+    var s = server.trim().trimEnd('/')
+    if (!s.contains("://")) s = "http://$s"
+    return "$s/get.php?username=${enc(user.trim())}&password=${enc(pass)}&type=m3u_plus&output=m3u8"
 }
 
 suspend fun connectProvider(input: String): Provider {
