@@ -66,10 +66,7 @@ fun NavRail(
         modifier.fillMaxHeight().background(Palette.surface).padding(horizontal = 12.dp, vertical = 20.dp),
     ) {
         if (!compact) {
-            Text(
-                "IPTV", Modifier.padding(start = 14.dp, bottom = 20.dp),
-                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Palette.accent,
-            )
+            BrandWordmark(15.sp, Modifier.padding(start = 6.dp, bottom = 24.dp))
         }
         items.forEachIndexed { i, (glyph, label, selected) ->
             NavItem(glyph, label, selected, compact, if (i == 0) firstFocus else Modifier) { onItem(i) }
@@ -115,8 +112,8 @@ fun LoginScreen(
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("IPTV", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = Palette.accent)
-            Text("Sign in to your provider", color = Palette.muted, modifier = Modifier.padding(bottom = 18.dp))
+            BrandWordmark(30.sp)
+            Text("Sign in with your provider login", color = Palette.muted, modifier = Modifier.padding(top = 12.dp, bottom = 18.dp))
             if (useUrl) {
                 OutlinedTextField(
                     value = urlText, onValueChange = onUrl, singleLine = true,

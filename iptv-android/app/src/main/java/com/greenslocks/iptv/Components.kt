@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
@@ -298,5 +299,27 @@ fun ChannelRow(
             }
             if (playing) Text("▶", color = Palette.accent, modifier = Modifier.padding(start = 8.dp))
         }
+    }
+}
+
+/** The Vance TV logo: gradient "V" tile, VANCE in white, TV in an accent badge. */
+@Composable
+fun BrandWordmark(textSize: TextUnit, modifier: Modifier = Modifier) {
+    val tile = with(androidx.compose.ui.platform.LocalDensity.current) { (textSize.toPx() * 1.7f).toDp() }
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(tile).clip(RoundedCornerShape(tile * 0.24f))
+                .background(Brush.linearGradient(listOf(Palette.accent, Palette.accent2))),
+            contentAlignment = Alignment.Center,
+        ) { Text("V", color = Color.White, fontSize = textSize * 1.05f, fontWeight = FontWeight.ExtraBold) }
+        Spacer(Modifier.width(tile * 0.3f))
+        Text("VANCE", color = Palette.text, fontSize = textSize, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        Spacer(Modifier.width(tile * 0.18f))
+        Text(
+            "TV", color = Color.White, fontSize = textSize, fontWeight = FontWeight.ExtraBold, maxLines = 1,
+            modifier = Modifier.clip(RoundedCornerShape(tile * 0.14f))
+                .background(Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2)))
+                .padding(horizontal = tile * 0.16f, vertical = tile * 0.02f),
+        )
     }
 }
