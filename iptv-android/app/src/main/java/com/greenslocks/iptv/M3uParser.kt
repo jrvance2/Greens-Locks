@@ -12,13 +12,18 @@ data class Playlist(val channels: List<Channel>, val epgUrl: String?)
 object M3uParser {
     private val attr = Regex("""([\w-]+)="([^"]*)"""")
 
-    fun parse(text: String): Playlist {
+    /**
+     * Streams the playlist line by line (provider playlists can be hundreds of MB) and keeps
+     * live channels only: Xtream-style movie/series entries are skipped.
+     */
+    fun parse(lines: Sequence<String>): Playlist {
+        val groups = HashMap<String, String>() // share one String per group name
         val out = mutableListOf<Channel>()
         var epgUrl: String? = null
         var name: String? = null
         var group = ""
         var tvgId = ""
-        for (raw in text.lineSequence()) {
+        for (raw in lines) {
             val line = raw.trim()
             when {
                 line.startsWith("#EXTM3U") -> {
@@ -34,7 +39,10 @@ object M3uParser {
                         .ifEmpty { attrs["tvg-name"].orEmpty() }
                 }
                 line.isNotEmpty() && !line.startsWith("#") -> {
-                    out += Channel(name?.ifEmpty { null } ?: line, line, group.ifEmpty { "Other" }, tvgId)
+                    if (!line.contains("/movie/") && !line.contains("/series/")) {
+                        val g = group.ifEmpty { "Other" }
+                        out += Channel(name?.ifEmpty { null } ?: line, line, groups.getOrPut(g) { g }, tvgId)
+                    }
                     name = null
                     group = ""
                     tvgId = ""

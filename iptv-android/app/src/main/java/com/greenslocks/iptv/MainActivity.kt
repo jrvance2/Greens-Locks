@@ -70,7 +70,7 @@ private fun clock(ms: Long): String =
 
 private suspend fun loadPlaylist(url: String): Playlist = withContext(Dispatchers.IO) {
     val conn = URL(url).openConnection().apply { connectTimeout = 15000; readTimeout = 60000 }
-    M3uParser.parse(conn.getInputStream().bufferedReader().use { it.readText() })
+    conn.getInputStream().bufferedReader().use { M3uParser.parse(it.lineSequence()) }
 }
 
 @Composable
