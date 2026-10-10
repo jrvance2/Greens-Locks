@@ -48,16 +48,22 @@ fun FocusCard(
 ) {
     val source = remember { MutableInteractionSource() }
     val focused by source.collectIsFocusedAsState()
-    val scale by animateFloatAsState(if (focused) scaleOnFocus else 1f, tween(140), label = "focusScale")
+    val grows = scaleOnFocus != 1f
+    val scale by animateFloatAsState(if (focused && grows) scaleOnFocus else 1f, tween(100), label = "focusScale")
     Box(
         modifier
-            .zIndex(if (focused) 1f else 0f)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .border(if (focused) borderWidth else 0.dp, Palette.accent, shape)
+            .then(
+                if (grows) Modifier.zIndex(if (focused) 1f else 0f).graphicsLayer { scaleX = scale; scaleY = scale }
+                else Modifier
+            )
+            // Only draw the ring while focused: a 0.dp border still paints a hairline.
+            .then(if (focused) Modifier.border(borderWidth, Palette.accent, shape) else Modifier)
             .clip(shape)
             .combinedClickable(interactionSource = source, indication = null, onLongClick = onLongClick, onClick = onClick)
     ) { content(focused) }
 }
+
+private val ArtBrush = Brush.linearGradient(listOf(Palette.surfaceHi, Palette.surface))
 
 @Composable
 fun Artwork(
@@ -67,17 +73,16 @@ fun Artwork(
     fit: ContentScale = ContentScale.Crop,
     alignment: Alignment = Alignment.Center,
 ) {
-    Box(
-        modifier.background(Brush.linearGradient(listOf(Palette.surfaceHi, Palette.surface))),
-        contentAlignment = Alignment.Center,
-    ) {
+    Box(modifier.background(ArtBrush), contentAlignment = Alignment.Center) {
         Text(
             title.trim().take(1).uppercase(),
             style = MaterialTheme.typography.headlineMedium, color = Palette.muted,
         )
         if (url.isNotBlank()) {
+            val ctx = LocalContext.current
+            val request = remember(url) { ImageRequest.Builder(ctx).data(url).crossfade(true).build() }
             AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current).data(url).crossfade(true).build(),
+                model = request,
                 contentDescription = null, contentScale = fit, alignment = alignment,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -242,7 +247,7 @@ fun ListRow(
     onLongClick: () -> Unit = {},
     onClick: () -> Unit,
 ) {
-    FocusCard(modifier.fillMaxWidth(), RoundedCornerShape(10.dp), 1.02f, 2.dp, onLongClick, onClick) { focused ->
+    FocusCard(modifier.fillMaxWidth(), RoundedCornerShape(10.dp), 1f, 2.dp, onLongClick, onClick) { focused ->
         Row(
             Modifier.fillMaxWidth()
                 .background(if (focused) Palette.accent.copy(alpha = 0.22f) else if (selected) Palette.surfaceHi else Palette.surface)
@@ -275,7 +280,7 @@ fun ChannelRow(
     onLongClick: () -> Unit,
     onClick: () -> Unit,
 ) {
-    FocusCard(modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(10.dp), 1.02f, 2.dp, onLongClick, onClick) { focused ->
+    FocusCard(modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(10.dp), 1f, 2.dp, onLongClick, onClick) { focused ->
         Row(
             Modifier.fillMaxWidth()
                 .background(if (focused) Palette.accent.copy(alpha = 0.2f) else if (playing) Palette.surfaceHi else Palette.surface)

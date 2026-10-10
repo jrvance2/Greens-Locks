@@ -11,13 +11,32 @@ android {
         applicationId = "com.greenslocks.iptv"
         minSdk = 23
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // CI supplies a stable signing key (so updates install over the old app); without one the
+    // build falls back to the temporary debug key and can still be installed fresh.
+    signingConfigs {
+        create("vancetv") {
+            val keystore = System.getenv("VANCETV_KEYSTORE")
+            if (!keystore.isNullOrBlank() && file(keystore).exists()) {
+                storeFile = file(keystore)
+                storePassword = System.getenv("VANCETV_STORE_PASSWORD")
+                keyAlias = System.getenv("VANCETV_KEY_ALIAS")
+                keyPassword = System.getenv("VANCETV_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Optimized, non-debuggable build: Compose is several times faster than in debug.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            val stable = signingConfigs.getByName("vancetv")
+            signingConfig = if (stable.storeFile != null) stable else signingConfigs.getByName("debug")
         }
     }
     compileOptions {

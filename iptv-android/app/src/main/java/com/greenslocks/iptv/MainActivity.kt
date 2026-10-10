@@ -17,6 +17,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -26,7 +28,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -323,7 +324,6 @@ private fun App() {
             return
         }
         ensureCategories(p, t)
-        listVersion++
     }
 
     fun orderedCats(t: Tab): List<Category> {
@@ -418,13 +418,12 @@ private fun App() {
         val p = provider ?: return
         fun go() {
             category = c; query = ""; entries = emptyList()
-            launchLoad { entries = p.entries(kind, c); listVersion++ }
+            launchLoad { entries = p.entries(kind, c) }
         }
         if (catLocked(kind, c)) requirePin("PIN required") { go() } else go()
     }
     fun openTab(t: Tab) {
         tab = t; query = ""; category = null; entries = emptyList()
-        listVersion++
         val p = provider ?: return
         if (t.browsable()) launchLoad {
             loadCategories(p, t)
@@ -592,10 +591,25 @@ private fun App() {
 
     val firstItem = remember { FocusRequester() }
     val rootFocus = remember { FocusRequester() }
-    LaunchedEffect(listVersion) {
-        if (isTv) { delay(300); runCatching { firstItem.requestFocus() } }
+    // Scroll positions live here so they survive the screen being swapped for an overlay.
+    val homeState = rememberLazyListState()
+    val liveState = rememberLazyListState()
+    val moviesGrid = rememberLazyGridState()
+    val seriesGrid = rememberLazyGridState()
+    val favGrid = rememberLazyGridState()
+    LaunchedEffect(tab, category?.id) {
+        liveState.scrollToItem(0); moviesGrid.scrollToItem(0); seriesGrid.scrollToItem(0); favGrid.scrollToItem(0)
     }
-    LaunchedEffect(fullscreen) { if (fullscreen) runCatching { rootFocus.requestFocus() } }
+    // Put focus on the first item when a screen comes up; its node may not exist yet, so retry briefly.
+    LaunchedEffect(listVersion) {
+        if (!isTv) return@LaunchedEffect
+        repeat(20) {
+            delay(80)
+            if (runCatching { firstItem.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
+    LaunchedEffect(fullscreen) { if (fullscreen) { delay(50); runCatching { rootFocus.requestFocus() } } }
+    val liveFocusIdx = shownEntries.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
 
     val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null)
     BackHandler(enabled = showSetup && provider != null) { showSetup = false }
@@ -839,8 +853,7 @@ private fun App() {
                     else -> false
                 }
             }
-            .focusRequester(rootFocus)
-            .focusable()
+            .then(if (fullscreen) Modifier.focusRequester(rootFocus).focusable() else Modifier)
     ) {
         if (provider == null || showSetup) {
             LoginScreen(
@@ -850,8 +863,46 @@ private fun App() {
                 onTogglePass = { showPass = !showPass }, onToggleMode = { useUrl = !useUrl },
                 onConnect = ::connect, onCancel = { showSetup = false },
             )
+        } else if (fullscreen && current != null) {
+                val e = current!!
+                PlayerSurface(player, false, resizeMode, Modifier.fillMaxSize().background(Color.Black))
+                if (numBuffer.isNotEmpty()) {
+                    Text(
+                        numBuffer, Modifier.align(Alignment.TopEnd).padding(40.dp),
+                        style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold,
+                    )
+                }
+                playbackError?.let {
+                    Text(it, Modifier.align(Alignment.Center), color = Palette.live)
+                }
+                FullscreenOverlay(
+                    showInfo, e, titleFor(e), isLive, isFav(e), epg, now, position, duration,
+                    if (isLive) "Up/Down: channel  ·  Left: last channel  ·  digits: jump  ·  Menu: options"
+                    else "Left/Right: seek 10s  ·  OK: pause  ·  Menu: options",
+                )
+        } else if (guideOpen && guide != null) {
+                GuideScreen(
+                    channels = guideChannels, nameOf = ::nameOf, guide = guide, now = now,
+                    onPlay = { ch -> playNow(ch, true); guideOpen = false },
+                    onClose = { guideOpen = false; listVersion++ },
+                )
+        } else if (detailEntry != null) {
+            val d = detailEntry!!
+                Box(Modifier.fillMaxSize()) {
+                    DetailScreen(
+                        d, nameOf(d), detail,
+                        resumeMs = store.long(posKey(d)),
+                        isFavorite = isFav(d),
+                        episodes = episodes,
+                        episodeProgress = ::progressOf,
+                        onPlay = { playNow(d, true) },
+                        onRestart = { store.remove(posKey(d)); playNow(d, true) },
+                        onFavorite = { toggleFavorite(d) },
+                        onEpisode = { playNow(it, true) },
+                    )
+                }
         } else {
-            Row(Modifier.fillMaxSize().focusProperties { canFocus = !overlayActive }) {
+            Row(Modifier.fillMaxSize()) {
                 NavRail(
                     items = listOf(
                         Triple("⌂", "Home", tab == Tab.HOME),
@@ -888,7 +939,7 @@ private fun App() {
                                 if (favs.isNotEmpty()) add(Triple("Favorites", favs, true))
                                 homeShelves.forEach { add(Triple(it.title, it.items.filter { e -> visible(e) }, false)) }
                             }
-                            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp)) {
+                            LazyColumn(Modifier.fillMaxSize(), state = homeState, contentPadding = PaddingValues(bottom = 40.dp)) {
                                 if (hero != null) item {
                                     HeroBanner(
                                         hero, if (cont.contains(hero)) "Continue watching" else "Featured",
@@ -926,7 +977,7 @@ private fun App() {
                                 modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
                             )
                             Row(Modifier.fillMaxSize()) {
-                                LazyColumn(Modifier.weight(1.1f).fillMaxHeight()) {
+                                LazyColumn(Modifier.weight(1.1f).fillMaxHeight(), state = liveState) {
                                     itemsIndexed(shownEntries) { i, e ->
                                         LaunchedEffect(e.id) { guide?.load(e) }
                                         val (cur, _) = nowNext(guide?.cache?.get(e.id).orEmpty(), now)
@@ -934,7 +985,7 @@ private fun App() {
                                             nameOf(e), e.icon, e.num, isFav(e), e.key() == current?.key(),
                                             cur?.title,
                                             cur?.let { (now - it.start).toFloat() / (it.stop - it.start).coerceAtLeast(1) },
-                                            if (i == 0) Modifier.focusRequester(firstItem) else Modifier,
+                                            if (i == liveFocusIdx) Modifier.focusRequester(firstItem) else Modifier,
                                             onLongClick = { menuTarget = MenuTarget.EntryT(e) },
                                         ) { onEntry(e) }
                                     }
@@ -954,6 +1005,7 @@ private fun App() {
                             }
                             LazyVerticalGrid(
                                 GridCells.Adaptive(140.dp), Modifier.fillMaxSize(),
+                                state = if (tab == Tab.MOVIES) moviesGrid else seriesGrid,
                                 contentPadding = PaddingValues(vertical = 16.dp, horizontal = 8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(22.dp),
@@ -976,6 +1028,7 @@ private fun App() {
                             }
                             LazyVerticalGrid(
                                 GridCells.Adaptive(230.dp), Modifier.fillMaxSize(),
+                                state = favGrid,
                                 contentPadding = PaddingValues(vertical = 16.dp, horizontal = 8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -994,48 +1047,6 @@ private fun App() {
                 }
             }
 
-            detailEntry?.let { d ->
-                Box(Modifier.fillMaxSize()) {
-                    DetailScreen(
-                        d, nameOf(d), detail,
-                        resumeMs = store.long(posKey(d)),
-                        isFavorite = isFav(d),
-                        episodes = episodes,
-                        episodeProgress = ::progressOf,
-                        onPlay = { playNow(d, true) },
-                        onRestart = { store.remove(posKey(d)); playNow(d, true) },
-                        onFavorite = { toggleFavorite(d) },
-                        onEpisode = { playNow(it, true) },
-                    )
-                }
-            }
-
-            if (guideOpen && guide != null) {
-                GuideScreen(
-                    channels = guideChannels, nameOf = ::nameOf, guide = guide, now = now,
-                    onPlay = { ch -> playNow(ch, true); guideOpen = false },
-                    onClose = { guideOpen = false; listVersion++ },
-                )
-            }
-
-            if (fullscreen && current != null) {
-                val e = current!!
-                PlayerSurface(player, false, resizeMode, Modifier.fillMaxSize().background(Color.Black))
-                if (numBuffer.isNotEmpty()) {
-                    Text(
-                        numBuffer, Modifier.align(Alignment.TopEnd).padding(40.dp),
-                        style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold,
-                    )
-                }
-                playbackError?.let {
-                    Text(it, Modifier.align(Alignment.Center), color = Palette.live)
-                }
-                FullscreenOverlay(
-                    showInfo, e, titleFor(e), isLive, isFav(e), epg, now, position, duration,
-                    if (isLive) "Up/Down: channel  ·  Left: last channel  ·  digits: jump  ·  Menu: options"
-                    else "Left/Right: seek 10s  ·  OK: pause  ·  Menu: options",
-                )
-            }
         }
     }
 }

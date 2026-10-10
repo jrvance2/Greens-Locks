@@ -35,7 +35,7 @@ data class Shelf(val title: String, val items: List<Entry>)
 
 @Composable
 fun NavItem(glyph: String, label: String, selected: Boolean, compact: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    FocusCard(modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(12.dp), 1.03f, 2.dp, onClick = onClick) { focused ->
+    FocusCard(modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(12.dp), 1f, 2.dp, onClick = onClick) { focused ->
         Row(
             Modifier.fillMaxWidth()
                 .background(if (focused) Palette.accent.copy(alpha = 0.28f) else if (selected) Palette.surfaceHi else Color.Transparent)
@@ -265,7 +265,7 @@ fun DetailScreen(
                     LazyColumn(Modifier.weight(1f).padding(top = 8.dp)) {
                         itemsIndexed(episodes.filter { it.season == activeSeason }) { _, ep ->
                             val p = episodeProgress(ep)
-                            FocusCard(Modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(10.dp), 1.02f, 2.dp, onClick = { onEpisode(ep) }) { focused ->
+                            FocusCard(Modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(10.dp), 1f, 2.dp, onClick = { onEpisode(ep) }) { focused ->
                                 Column(
                                     Modifier.fillMaxWidth()
                                         .background(if (focused) Palette.accent.copy(alpha = 0.22f) else Palette.surface)
