@@ -8,7 +8,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
@@ -41,6 +42,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URL
+import java.text.DateFormat
+import java.util.Date
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,7 +57,18 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private suspend fun loadPlaylist(url: String): List<Channel> = withContext(Dispatchers.IO) {
+private const val FAVORITES = "\u2605 Favorites"
+
+private fun redact(msg: String?): String =
+    (msg ?: "unknown error").replace(Regex("(?i)(username|password|user|pass)=[^&\\s]*"), "$1=***")
+
+private fun epgUrlFor(playlistUrl: String, fromHeader: String?): String? =
+    fromHeader ?: if ("get.php" in playlistUrl) playlistUrl.replace("get.php", "xmltv.php") else null
+
+private fun clock(ms: Long): String =
+    DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(ms))
+
+private suspend fun loadPlaylist(url: String): Playlist = withContext(Dispatchers.IO) {
     val conn = URL(url).openConnection().apply { connectTimeout = 15000; readTimeout = 60000 }
     M3uParser.parse(conn.getInputStream().bufferedReader().use { it.readText() })
 }
@@ -67,8 +81,17 @@ private fun PlayerSurface(player: ExoPlayer, showController: Boolean, modifier: 
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChannelRow(ch: Channel, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun ChannelRow(
+    ch: Channel,
+    selected: Boolean,
+    favorite: Boolean,
+    subtitle: String,
+    modifier: Modifier,
+    onLongClick: () -> Unit,
+    onClick: () -> Unit,
+) {
     val source = remember { MutableInteractionSource() }
     val focused by source.collectIsFocusedAsState()
     val colors = MaterialTheme.colorScheme
@@ -82,14 +105,26 @@ private fun ChannelRow(ch: Channel, selected: Boolean, modifier: Modifier, onCli
         modifier
             .fillMaxWidth()
             .background(bg, RoundedCornerShape(8.dp))
-            .clickable(interactionSource = source, indication = null, onClick = onClick)
+            .combinedClickable(
+                interactionSource = source, indication = null,
+                onLongClick = onLongClick, onClick = onClick,
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
-        Text(ch.name, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text((if (favorite) "\u2605 " else "") + ch.name, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
-            ch.group, color = fg.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            subtitle, color = fg.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.bodySmall,
         )
+    }
+}
+
+@Composable
+private fun NowNext(ch: Channel, epg: Map<String, List<Programme>>, now: Long, modifier: Modifier = Modifier) {
+    val (cur, next) = Epg.nowNext(epg[ch.tvgId.lowercase()], now)
+    Column(modifier) {
+        if (cur != null) Text("Now: ${cur.title} (until ${clock(cur.stop)})", style = MaterialTheme.typography.bodyMedium)
+        if (next != null) Text("Next ${clock(next.start)}: ${next.title}", style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -111,32 +146,68 @@ private fun App() {
     var group by remember { mutableStateOf<String?>(null) }
     var current by remember { mutableStateOf<Channel?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
+    var epg by remember { mutableStateOf(emptyMap<String, List<Programme>>()) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var favorites by remember { mutableStateOf(prefs.getStringSet("fav", emptySet())!!.toSet()) }
+    var showInfo by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
+
+    fun toggleFavorite(ch: Channel) {
+        favorites = if (ch.url in favorites) favorites - ch.url else favorites + ch.url
+        prefs.edit().putStringSet("fav", favorites).apply()
+    }
 
     val player = remember { ExoPlayer.Builder(ctx).build() }
     DisposableEffect(Unit) { onDispose { player.release() } }
     LaunchedEffect(current) {
         current?.let {
+            prefs.edit().putString("last", it.url).apply()
             player.setMediaItem(MediaItem.fromUri(it.url))
             player.prepare()
             player.playWhenReady = true
         }
     }
     BackHandler(enabled = fullscreen) { fullscreen = false }
+    LaunchedEffect(current, fullscreen) {
+        showInfo = true
+        delay(5000)
+        showInfo = false
+    }
 
     fun load() {
         prefs.edit().putString("url", playlistUrl).apply()
         status = "Loading…"
         scope.launch {
             runCatching { loadPlaylist(playlistUrl.trim()) }
-                .onSuccess { channels = it; status = "${it.size} channels" }
-                .onFailure { status = "Failed: ${it.message}" }
+                .onSuccess { pl ->
+                    channels = pl.channels
+                    status = "${pl.channels.size} channels"
+                    if (current == null) {
+                        val last = prefs.getString("last", null)
+                        current = pl.channels.firstOrNull { it.url == last }
+                    }
+                    epgUrlFor(playlistUrl.trim(), pl.epgUrl)?.let { url ->
+                        runCatching { withContext(Dispatchers.IO) { Epg.load(url) } }
+                            .onSuccess { epg = it; status = "${pl.channels.size} channels, guide loaded" }
+                            .onFailure { status = "${pl.channels.size} channels (guide unavailable)" }
+                    }
+                }
+                .onFailure { status = "Failed: ${redact(it.message)}" }
         }
     }
     LaunchedEffect(Unit) { if (playlistUrl.isNotBlank()) load() }
 
     val groups = remember(channels) { channels.map { it.group }.distinct().sorted() }
-    val shown = remember(channels, group, query) {
-        channels.filter { (group == null || it.group == group) && it.name.contains(query, ignoreCase = true) }
+    val shown = remember(channels, group, query, favorites) {
+        channels.filter {
+            val inGroup = when (group) {
+                null -> true
+                FAVORITES -> it.url in favorites
+                else -> it.group == group
+            }
+            inGroup && it.name.contains(query, ignoreCase = true)
+        }
     }
 
     fun step(delta: Int) {
@@ -171,6 +242,10 @@ private fun App() {
             )
             LazyRow {
                 item { FilterChip(group == null, { group = null }, { Text("All") }) }
+                item {
+                    Spacer(Modifier.width(6.dp))
+                    FilterChip(group == FAVORITES, { group = FAVORITES }, { Text(FAVORITES) })
+                }
                 items(groups) { g ->
                     Spacer(Modifier.width(6.dp))
                     FilterChip(group == g, { group = g }, { Text(g) })
@@ -178,9 +253,12 @@ private fun App() {
             }
             LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)) {
                 itemsIndexed(shown) { index, ch ->
+                    val nowTitle = Epg.nowNext(epg[ch.tvgId.lowercase()], now).first?.title
                     ChannelRow(
-                        ch, selected = ch == current,
+                        ch, selected = ch == current, favorite = ch.url in favorites,
+                        subtitle = nowTitle ?: ch.group,
                         modifier = if (index == 0) Modifier.focusRequester(firstItem) else Modifier,
+                        onLongClick = { toggleFavorite(ch) },
                     ) {
                         // First press plays; pressing OK on the playing channel goes fullscreen.
                         if (current == ch) fullscreen = true else current = ch
@@ -198,12 +276,24 @@ private fun App() {
                 else when (e.key) {
                     Key.DirectionUp, Key.ChannelUp -> { step(-1); true }
                     Key.DirectionDown, Key.ChannelDown -> { step(1); true }
+                    Key.Menu -> { current?.let(::toggleFavorite); true }
                     else -> false
                 }
             }
     ) {
         if (fullscreen && current != null) {
             PlayerSurface(player, showController = false, modifier = Modifier.fillMaxSize().background(Color.Black))
+            if (showInfo) {
+                Column(
+                    Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.7f)).padding(24.dp)
+                ) {
+                    val ch = current!!
+                    Text((if (ch.url in favorites) "\u2605 " else "") + ch.name, style = MaterialTheme.typography.headlineSmall)
+                    NowNext(ch, epg, now)
+                    Text("Menu: favorite", style = MaterialTheme.typography.bodySmall)
+                }
+            }
         } else if (isTv) {
             Row(Modifier.fillMaxSize().padding(24.dp)) {
                 Column(Modifier.weight(0.4f).fillMaxHeight()) { browser() }
@@ -212,8 +302,9 @@ private fun App() {
                     if (current != null) {
                         PlayerSurface(player, showController = false, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                         Text(current!!.name, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleLarge)
-                        Text("Press OK on the playing channel for fullscreen. Up/Down changes channel.",
-                            style = MaterialTheme.typography.bodySmall)
+                        NowNext(current!!, epg, now)
+                        Text("OK: play, OK again: fullscreen, hold OK: favorite. Up/Down changes channel.",
+                            Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
                     } else {
                         Text("Select a channel to start watching")
                     }
@@ -224,6 +315,7 @@ private fun App() {
                 if (current != null) {
                     PlayerSurface(player, showController = true, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                     Text(current!!.name, Modifier.padding(vertical = 4.dp), style = MaterialTheme.typography.titleMedium)
+                    NowNext(current!!, epg, now)
                 }
                 browser()
             }
