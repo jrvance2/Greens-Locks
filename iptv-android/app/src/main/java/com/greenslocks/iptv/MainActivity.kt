@@ -252,6 +252,9 @@ private fun App() {
     var kidsCats by remember { mutableStateOf(store.list("kidsCats").toSet()) }
     var pickerKids by remember { mutableStateOf(false) }
     var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
+    var trackPanelOpen by remember { mutableStateOf(false) }
+    var trackTick by remember { mutableIntStateOf(0) }
+    val trackFocus = remember { FocusRequester() }
     var zapStrip by remember { mutableStateOf(store.flag("zapStrip", false)) }
     var stripIdx by remember { mutableStateOf<Int?>(null) }
     var stripTick by remember { mutableIntStateOf(0) }
@@ -1225,6 +1228,16 @@ private fun App() {
         if (pickerKids) { pickerKids = false; homeShelves = emptyList(); provider?.let { loadHome(it) } }
     }
     BackHandler(enabled = stripIdx != null) { stripIdx = null }
+    BackHandler(enabled = trackPanelOpen) { trackPanelOpen = false }
+    LaunchedEffect(trackPanelOpen) {
+        if (trackPanelOpen) {
+            repeat(15) { delay(80); if (runCatching { trackFocus.requestFocus() }.isSuccess) return@LaunchedEffect }
+        } else if (fullscreen) {
+            delay(50); runCatching { rootFocus.requestFocus() }
+        }
+    }
+    LaunchedEffect(trackPanelOpen, trackTick) { if (trackPanelOpen) { delay(12_000); trackPanelOpen = false } }
+    LaunchedEffect(fullscreen) { if (!fullscreen) trackPanelOpen = false }
     LaunchedEffect(stripIdx, stripTick) { if (stripIdx != null) { delay(6000); stripIdx = null } }
     BackHandler(enabled = multiOpen) { multiOpen = false; listVersion++ }
     BackHandler(enabled = appearanceOpen) { appearanceOpen = false; listVersion++ }
@@ -1703,6 +1716,13 @@ private fun App() {
             .onPreviewKeyEvent { ev ->
                 if (!fullscreen || ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 infoTick++
+                if (trackPanelOpen) {
+                    trackTick++
+                    return@onPreviewKeyEvent when (ev.key) {
+                        Key.DirectionLeft, Key.Captions, Key.MediaAudioTrack -> { trackPanelOpen = false; true }
+                        else -> false // Up/Down/OK go to the rows in the panel
+                    }
+                }
                 val stripList = guideChannels
                 stripIdx?.let { si ->
                     when (ev.key) {
@@ -1739,7 +1759,7 @@ private fun App() {
                             stripIdx = (at - 1).mod(stripList.size); stripTick++
                         } else step(-1)
                         true
-                    } else false
+                    } else { trackPanelOpen = true; true }
                     Key.DirectionDown, Key.ChannelDown -> if (isLive) {
                         if (zapStrip && stripList.isNotEmpty()) {
                             val at = stripList.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
@@ -1750,7 +1770,8 @@ private fun App() {
                     Key.DirectionLeft -> if (isLive) { openPanel(); true } else {
                         player.seekTo((player.currentPosition - 10_000).coerceAtLeast(0)); true
                     }
-                    Key.DirectionRight -> if (!isLive) { player.seekTo(player.currentPosition + 10_000); true } else false
+                    Key.DirectionRight -> if (!isLive) { player.seekTo(player.currentPosition + 10_000); true } else { trackPanelOpen = true; true }
+                    Key.Captions, Key.MediaAudioTrack -> { trackPanelOpen = true; true }
                     Key.DirectionCenter, Key.Enter, Key.MediaPlayPause -> {
                         if (player.isPlaying) player.pause() else player.play(); true
                     }
@@ -1870,11 +1891,21 @@ private fun App() {
                 }
                 FullscreenOverlay(
                     showInfo && stripIdx == null, e, titleFor(e), isLive, isFav(e), epg, now, position, duration,
-                    if (isLive) (if (zapStrip) "Up/Down: browse channels" else "Up/Down: channel") + "  ·  Left: channel list  ·  ⏪ ⏩ rewind / live  ·  Menu: options"
-                    else "Left/Right: seek 10s  ·  OK: pause  ·  Menu: options",
+                    if (isLive) (if (zapStrip) "Up/Down: browse channels" else "Up/Down: channel") + "  ·  Left: channel list  ·  Right: audio & subtitles  ·  ⏪ ⏩ rewind / live  ·  Menu: options"
+                    else "Left/Right: seek 10s  ·  Up: audio & subtitles  ·  OK: pause  ·  Menu: options",
                     catchUp = isCatchUp, badge = streamBadge(player), behindLiveSec = behindLive, sleepLeftMin = sleepLeft,
                 )
                 nextUp?.let { NextUpCard(it.title, nextUpSecs) }
+                TrackPanel(
+                    visible = trackPanelOpen,
+                    details = run { @Suppress("UNUSED_EXPRESSION") tracksTick; streamDetails(player) },
+                    audio = run { @Suppress("UNUSED_EXPRESSION") tracksTick; audioRows(player) },
+                    text = run { @Suppress("UNUSED_EXPRESSION") tracksTick; textRows(player) },
+                    subSize = subSize, subNames = SUB_NAMES, focus = trackFocus,
+                    onAudio = { selectAudio(player, it); tracksTick++ },
+                    onText = { selectText(player, it); tracksTick++ },
+                    onSubSize = { subSize = it; store.setInt("subSize", it) },
+                )
                 ChannelPanel(
                     visible = panelOpen && isLive, mode = panelMode,
                     title = if (panelMode == 0) (panelCat?.let { catName(Kind.LIVE, it) }?.ifBlank { null } ?: "Channels") else "Categories",

@@ -117,3 +117,38 @@ fun streamDetails(p: Player): String {
     val audio = if (a == null) "" else "   |   Audio: " + listOf(audioCodec(a.sampleMimeType), channelLabel(a.channelCount)).filter { it.isNotEmpty() }.joinToString(" ")
     return "Stream: $video$audio"
 }
+
+data class TrackRow(val label: String, val selected: Boolean)
+
+/** Audio tracks for the quick panel, e.g. "English  ·  Dolby Digital 5.1". */
+fun audioRows(p: Player): List<TrackRow> = p.currentTracks.audio().mapIndexed { i, g ->
+    val f = g.getTrackFormat(0)
+    val detail = listOf(audioCodec(f.sampleMimeType), channelLabel(f.channelCount)).filter { it.isNotEmpty() }.joinToString(" ")
+    TrackRow(trackName(g, i) + if (detail.isNotEmpty()) "  \u00B7  $detail" else "", g.isSelected)
+}
+
+fun selectAudio(p: Player, index: Int) {
+    val g = p.currentTracks.audio().getOrNull(index) ?: return
+    p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+        .setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, 0)).build()
+}
+
+/** Subtitle choices for the quick panel; the first row is always "Off". Empty when the stream has none. */
+fun textRows(p: Player): List<TrackRow> {
+    val gs = p.currentTracks.text()
+    if (gs.isEmpty()) return emptyList()
+    val off = textOff(p, gs)
+    return listOf(TrackRow("Off", off)) + gs.mapIndexed { i, g -> TrackRow(trackName(g, i), !off && g.isSelected) }
+}
+
+fun selectText(p: Player, index: Int) {
+    val gs = p.currentTracks.text()
+    val b = p.trackSelectionParameters.buildUpon()
+    if (index == 0) {
+        b.clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+    } else {
+        val g = gs.getOrNull(index - 1) ?: return
+        b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, 0))
+    }
+    p.trackSelectionParameters = b.build()
+}
