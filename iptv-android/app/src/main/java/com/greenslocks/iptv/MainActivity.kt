@@ -552,7 +552,7 @@ private fun App() {
         cats, catFilter, catRegion, counts, pinnedCats, renames, hiddenCats, lockedCats, unlocked, hasPin, lockAdult, tab,
     ) {
         val kind = tab.kind()
-        if (kind == null) emptyList() else cats.filter { c ->
+        if (kind == null) emptyList<CatRow>() else cats.filter { c ->
             val k = catKey(kind, c.id)
             (catFilter.isBlank() || catName(kind, c).contains(catFilter, ignoreCase = true)) &&
                 when (catRegion) { "*all" -> true; "*pin" -> k in pinnedCats; else -> regionOf(c.name) == catRegion }
