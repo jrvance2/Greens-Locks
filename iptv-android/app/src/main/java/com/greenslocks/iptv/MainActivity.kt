@@ -74,7 +74,7 @@ class MainActivity : ComponentActivity() {
         val store = Store(getSharedPreferences("iptv", MODE_PRIVATE))
         intent.getStringExtra("playlist_url")?.let { store.setUrl(it) }
         intent.getStringExtra("tmdb_key")?.let { store.setGString("tmdbKey", it) }
-        applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0))
+        applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0), store.int("ui", 1))
         pendingLaunch.value = intent.getStringExtra("play_entry")
         setContent { IptvTheme { App() } }
     }
@@ -224,6 +224,7 @@ private fun App() {
     var bgIdx by remember { mutableIntStateOf(store.int("bg", 0)) }
     var cardIdx by remember { mutableIntStateOf(store.int("cards", 1)) }
     var textIdx by remember { mutableIntStateOf(store.int("text", 1)) }
+    var uiIdx by remember { mutableIntStateOf(store.int("ui", 1)) }
     var animIdx by remember { mutableIntStateOf(store.int("anim", 0)) }
     var startIdx by remember { mutableIntStateOf(store.int("start", 1)) }
     var startTick by remember { mutableIntStateOf(0) }
@@ -507,7 +508,7 @@ private fun App() {
         hiddenCats = if (hidden) hiddenCats + keys else hiddenCats - keys
         store.setList("hidCats", hiddenCats.toList())
     }
-    fun applyNow() = applyAppearance(accentIdx, bgIdx, cardIdx, textIdx, animIdx)
+    fun applyNow() = applyAppearance(accentIdx, bgIdx, cardIdx, textIdx, animIdx, uiIdx)
     fun toggleLockedCat(k: String) {
         lockedCats = if (k in lockedCats) lockedCats - k else lockedCats + k
         store.setList("lockCats", lockedCats.toList())
@@ -876,7 +877,7 @@ private fun App() {
     }
     fun afterImport() {
         accentIdx = store.int("accent", 0); bgIdx = store.int("bg", 0); cardIdx = store.int("cards", 1)
-        textIdx = store.int("text", 1); animIdx = store.int("anim", 0); startIdx = store.int("start", 1)
+        textIdx = store.int("text", 1); uiIdx = store.int("ui", 1); animIdx = store.int("anim", 0); startIdx = store.int("start", 1)
         sortAz = store.flag("sortAz", false); showHidden = store.flag("showHidden", false)
         lockAdult = store.flag("lockAdult", true); autoNext = store.flag("autoNext", true)
         matchFps = store.flag("matchFps", true); liveTs = store.flag("liveTs", false)
@@ -1754,7 +1755,8 @@ private fun App() {
             )
         } else if (appearanceOpen) {
             AppearanceScreen(
-                accentIdx, bgIdx, cardIdx, textIdx, animIdx, startIdx,
+                accentIdx, bgIdx, cardIdx, textIdx, animIdx, startIdx, uiIdx,
+                onUi = { uiIdx = it; store.setInt("ui", it); applyNow() },
                 onAccent = { accentIdx = it; store.setInt("accent", it); applyNow() },
                 onBg = { bgIdx = it; store.setInt("bg", it); applyNow() },
                 onCards = { cardIdx = it; store.setInt("cards", it); applyNow() },

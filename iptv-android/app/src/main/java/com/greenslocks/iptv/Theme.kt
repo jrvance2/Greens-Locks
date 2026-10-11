@@ -34,6 +34,8 @@ object Palette {
 object Dimens {
     var cardScale by mutableFloatStateOf(1f)
     var textScale by mutableFloatStateOf(1f)
+    /** Zooms everything (text and layout) so a 4K TV can show more on screen. */
+    var uiScale by mutableFloatStateOf(0.85f)
     /** 0 = full animations, 1 = reduced, 2 = off. */
     var animLevel by mutableIntStateOf(0)
 
@@ -62,10 +64,13 @@ val CARD_NAMES = listOf("Compact", "Comfortable", "Large")
 val CARD_SCALES = listOf(0.86f, 1f, 1.2f)
 val TEXT_NAMES = listOf("Small", "Normal", "Large")
 val TEXT_SCALES = listOf(0.9f, 1f, 1.15f)
+val UI_NAMES = listOf("Dense 75%", "Compact 85%", "Standard 100%", "Large 115%")
+val UI_SCALES = listOf(0.75f, 0.85f, 1f, 1.15f)
 val ANIM_NAMES = listOf("Full", "Reduced", "Off")
 val START_NAMES = listOf("Home", "Live TV", "Last channel")
 
-fun applyAppearance(accent: Int, bg: Int, cards: Int, text: Int, anim: Int) {
+fun applyAppearance(accent: Int, bg: Int, cards: Int, text: Int, anim: Int, ui: Int = 1) {
+    Dimens.uiScale = UI_SCALES[ui.coerceIn(0, UI_SCALES.lastIndex)]
     val a = ACCENTS[accent.coerceIn(0, ACCENTS.lastIndex)]
     Palette.accent = a.first
     Palette.accent2 = a.second
@@ -81,7 +86,7 @@ fun applyAppearance(accent: Int, bg: Int, cards: Int, text: Int, anim: Int) {
 @Composable
 fun IptvTheme(content: @Composable () -> Unit) {
     val d = LocalDensity.current
-    CompositionLocalProvider(LocalDensity provides Density(d.density, d.fontScale * Dimens.textScale)) {
+    CompositionLocalProvider(LocalDensity provides Density(d.density * Dimens.uiScale, d.fontScale * Dimens.textScale)) {
         MaterialTheme(
             colorScheme = darkColorScheme(
                 primary = Palette.accent, onPrimary = Color.White,

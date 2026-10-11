@@ -39,7 +39,7 @@ private fun SettingRow(label: String, desc: String, content: @Composable RowScop
 /** Every change applies immediately, so this screen is its own live preview. */
 @Composable
 fun AppearanceScreen(
-    accent: Int, bg: Int, cards: Int, text: Int, anim: Int, start: Int,
+    accent: Int, bg: Int, cards: Int, text: Int, anim: Int, start: Int, ui: Int, onUi: (Int) -> Unit,
     onAccent: (Int) -> Unit, onBg: (Int) -> Unit, onCards: (Int) -> Unit,
     onText: (Int) -> Unit, onAnim: (Int) -> Unit, onStart: (Int) -> Unit,
     onClose: () -> Unit,
@@ -73,6 +73,9 @@ fun AppearanceScreen(
         }
         SettingRow("Background", "Navy is easy on the eyes; Black suits OLED TVs") {
             BACKGROUNDS.forEachIndexed { i, p -> Chip(p.name, bg == i) { onBg(i) } }
+        }
+        SettingRow("Interface size", "Dense fits the most on a 4K TV; Large is easiest to read from far away") {
+            UI_NAMES.forEachIndexed { i, n -> Chip(n, ui == i) { onUi(i) } }
         }
         SettingRow("Card size", "Compact fits more on screen; Large reads better from the couch") {
             CARD_NAMES.forEachIndexed { i, n -> Chip(n, cards == i) { onCards(i) } }
