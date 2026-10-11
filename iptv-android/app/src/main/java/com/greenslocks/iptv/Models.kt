@@ -28,7 +28,15 @@ data class Entry(
 val Entry.isLiveNow: Boolean get() = kind == Kind.LIVE && start == 0L
 val Entry.isCatchUp: Boolean get() = kind == Kind.LIVE && start > 0L
 
-data class Detail(val plot: String, val meta: String, val poster: String, val trailer: String = "")
+data class Detail(
+    val plot: String,
+    val meta: String,
+    val poster: String,
+    val trailer: String = "",
+    val cast: List<String> = emptyList(),
+    val backdrop: String = "",
+    val tagline: String = "",
+)
 
 data class Programme(val title: String, val start: Long, val stop: Long, val archive: Boolean = false)
 
@@ -43,6 +51,19 @@ data class AccountInfo(
 )
 
 private const val SEP = "\u0001"
+private const val RSEP = "\u0004"
+
+/** A programme the user asked to be reminded about. */
+data class Reminder(val channel: Entry, val start: Long, val title: String)
+
+fun encodeReminder(r: Reminder): String = listOf(r.start.toString(), r.title, r.channel.encode()).joinToString(RSEP)
+
+fun decodeReminder(s: String): Reminder? {
+    val p = s.split(RSEP, limit = 3)
+    if (p.size < 3) return null
+    val ch = decodeEntry(p[2]) ?: return null
+    return Reminder(ch, p[0].toLongOrNull() ?: return null, p[1])
+}
 
 /** Stable identity, unaffected by renames or changed artwork. */
 fun Entry.key(): String = "${kind.name}:$id"

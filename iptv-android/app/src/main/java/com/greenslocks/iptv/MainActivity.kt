@@ -2,7 +2,10 @@
 
 package com.greenslocks.iptv
 
+import android.app.PictureInPictureParams
 import android.app.UiModeManager
+import android.os.Build
+import android.util.Rational
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -69,10 +72,27 @@ class MainActivity : ComponentActivity() {
         // adb shell am start -n com.greenslocks.iptv/.MainActivity --es playlist_url "<url>"
         val store = Store(getSharedPreferences("iptv", MODE_PRIVATE))
         intent.getStringExtra("playlist_url")?.let { store.setUrl(it) }
+        intent.getStringExtra("tmdb_key")?.let { store.setGString("tmdbKey", it) }
         applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0))
         setContent { IptvTheme { App() } }
     }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (PipState.ready) enterPip()
+    }
+
+    fun enterPip() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            runCatching {
+                enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
+            }
+        }
+    }
 }
+
+/** True while a video is fullscreen, so leaving the app shrinks it to a floating window. */
+private object PipState { @Volatile var ready = false }
 
 private enum class Tab {
     HOME, LIVE, MOVIES, SERIES, FAVORITES;
@@ -90,6 +110,8 @@ private enum class Tab {
 private sealed interface MenuTarget {
     data class EntryT(val entry: Entry) : MenuTarget
     data class CatT(val kind: Kind, val cat: Category) : MenuTarget
+    data class GroupT(val id: String) : MenuTarget
+    data class AddToGroupT(val entry: Entry) : MenuTarget
 }
 
 private val RESIZES = listOf(
@@ -201,6 +223,15 @@ private fun App() {
     var liveTs by remember { mutableStateOf(store.flag("liveTs", false)) }
     var sortMode by remember { mutableIntStateOf(store.int("sortMode", 0)) }
     var myList by remember { mutableStateOf(store.list("mylist")) }
+    var groups by remember { mutableStateOf(store.map("groups")) }
+    var reminders by remember { mutableStateOf(store.list("reminders")) }
+    var dueReminder by remember { mutableStateOf<Reminder?>(null) }
+    var remindersOpen by remember { mutableStateOf(false) }
+    var kidsMode by remember { mutableStateOf(store.isKids(store.active)) }
+    var kidsCats by remember { mutableStateOf(store.list("kidsCats").toSet()) }
+    var pickerKids by remember { mutableStateOf(false) }
+    var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
+    var tmdbKey by remember { mutableStateOf(store.gString("tmdbKey").orEmpty()) }
     var favTab by remember { mutableIntStateOf(0) }
     var sleepIdx by remember { mutableIntStateOf(0) }
     var sleepAt by remember { mutableLongStateOf(0L) }
@@ -302,6 +333,22 @@ private fun App() {
         onDispose { player.removeListener(listener); player.release() }
     }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
+
+    SideEffect { PipState.ready = fullscreen && current != null }
+    LaunchedEffect(now, reminders) {
+        if (dueReminder != null) return@LaunchedEffect
+        val all = reminders.mapNotNull(::decodeReminder)
+        val due = all.firstOrNull { it.start - now <= 60_000 && now - it.start < 300_000 }
+        val stale = all.filter { now - it.start >= 300_000 }
+        if (due != null || stale.isNotEmpty()) {
+            val drop = stale + listOfNotNull(due)
+            reminders = reminders.filter { s ->
+                decodeReminder(s)?.let { r -> drop.none { it.channel.id == r.channel.id && it.start == r.start } } ?: false
+            }
+            store.setList("reminders", reminders)
+            dueReminder = due
+        }
+    }
 
     fun toast(msg: String) { Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show() }
 
@@ -429,11 +476,66 @@ private fun App() {
 
     fun orderedCats(t: Tab): List<Category> {
         val kind = t.kind() ?: return emptyList()
-        val visibleCats = catCache[t].orEmpty().filter { showHidden || catKey(kind, it.id) !in hiddenCats }
+        val visibleCats = catCache[t].orEmpty().filter {
+            (showHidden || catKey(kind, it.id) !in hiddenCats) && (!kidsMode || catKey(kind, it.id) in kidsCats)
+        }
         return if (sortAz) visibleCats.sortedBy { catName(kind, it).lowercase() } else {
             val order = catOrder[kind.name]?.split(LSEP).orEmpty()
             val index = order.withIndex().associate { it.value to it.index }
             visibleCats.sortedBy { index[it.id] ?: Int.MAX_VALUE }
+        }
+    }
+
+    fun setKidsMany(kind: Kind, ids: Collection<String>, allowed: Boolean) {
+        val keys = ids.map { catKey(kind, it) }.toSet()
+        kidsCats = if (allowed) kidsCats + keys else kidsCats - keys
+        store.setList("kidsCats", kidsCats.toList())
+    }
+    fun setPicked(kind: Kind, ids: Collection<String>, checked: Boolean) =
+        if (pickerKids) setKidsMany(kind, ids, checked) else setHiddenMany(kind, ids, !checked)
+
+    fun groupEntries(id: String) = store.list("grp_$id").mapNotNull(::decodeEntry)
+    fun newGroup(name: String): String {
+        var n = 1
+        while (groups.containsKey(n.toString())) n++
+        val id = n.toString()
+        groups = groups + (id to name)
+        store.setMap("groups", groups)
+        return id
+    }
+    fun addToGroup(id: String, e: Entry) {
+        val l = store.list("grp_$id")
+        if (l.mapNotNull(::decodeEntry).none { it.key() == e.key() }) store.setList("grp_$id", l + e.encode())
+        toast("Added to \"${groups[id].orEmpty()}\"")
+    }
+    fun removeFromGroup(id: String, e: Entry) {
+        store.setList("grp_$id", store.list("grp_$id").filter { decodeEntry(it)?.key() != e.key() })
+        if (category?.id == "g:$id") entries = groupEntries(id)
+    }
+    fun deleteGroup(id: String) {
+        groups = groups - id
+        store.setMap("groups", groups)
+        store.setList("grp_$id", emptyList())
+        if (category?.id == "g:$id") { category = null; entries = emptyList() }
+    }
+
+    val reminderKeys = remember(reminders) { reminders.mapNotNull(::decodeReminder).map { "${it.channel.id}:${it.start}" }.toSet() }
+    fun toggleReminder(ch: Entry, p: Programme) {
+        val k = "${ch.id}:${p.start}"
+        val had = k in reminderKeys
+        reminders = if (had) reminders.filter { s -> decodeReminder(s)?.let { "${it.channel.id}:${it.start}" } != k }
+        else reminders + encodeReminder(Reminder(ch, p.start, p.title))
+        store.setList("reminders", reminders)
+        toast(if (had) "Reminder removed" else "Reminder set for ${p.title}. Keep Vance TV open to be switched over.")
+    }
+
+    fun loadDetail(p: Provider, e: Entry) {
+        scope.launch {
+            detail = runCatching { p.detail(e) }.getOrNull()
+            if (tmdbKey.isNotBlank()) {
+                val t = runCatching { Tmdb.lookup(tmdbKey, e.title, e.kind == Kind.SERIES) }.getOrNull()
+                if (t != null && detailEntry?.key() == e.key()) detail = Tmdb.merge(detail, t)
+            }
         }
     }
 
@@ -536,6 +638,11 @@ private fun App() {
         catOrder = store.map("catOrder")
         pinnedCats = store.list("pinCats").toSet()
         myList = store.list("mylist")
+        groups = store.map("groups")
+        reminders = store.list("reminders")
+        kidsMode = store.isKids(store.active)
+        kidsCats = store.list("kidsCats").toSet()
+        unlocked = false
         player.stop()
         current = null; fullscreen = false; provider = null
         resetBrowsing()
@@ -551,7 +658,8 @@ private fun App() {
         val p = provider ?: return
         fun go() {
             category = c; query = ""; entries = emptyList()
-            launchLoad { entries = p.entries(kind, c) }
+            if (c.id.startsWith("g:")) entries = groupEntries(c.id.removePrefix("g:"))
+            else launchLoad { entries = p.entries(kind, c) }
         }
         if (catLocked(kind, c)) requirePin("PIN required") { go() } else go()
     }
@@ -569,13 +677,13 @@ private fun App() {
         val p = provider ?: return
         series = e; detailEntry = e; detail = null; episodes = emptyList()
         launchLoad { episodes = p.episodes(e).map { it.copy(cat = e.cat) } }
-        scope.launch { detail = runCatching { p.detail(e) }.getOrNull() }
+        loadDetail(p, e)
     }
     fun openMovie(e: Entry) {
         val p = provider ?: return
         if (player.isPlaying) { player.pause(); pausedForDetail = true }
         detailEntry = e; detail = null
-        scope.launch { detail = runCatching { p.detail(e) }.getOrNull() }
+        loadDetail(p, e)
     }
     fun closeDetail() {
         detailEntry = null; detail = null; series = null; episodes = emptyList()
@@ -619,7 +727,7 @@ private fun App() {
     }
 
     fun catchUpEntry(ch: Entry, p: Programme) = ch.copy(
-        title = "${nameOf(ch)} · ${p.title}", start = p.start, durMin = ((p.stop - p.start) / 60_000).toInt() + 2,
+        title = "${nameOf(ch)} · ${p.title}", start = p.start - epgShift * 3_600_000L, durMin = ((p.stop - p.start) / 60_000).toInt() + 2,
     )
     fun playCatchUp(ch: Entry, p: Programme) {
         if (!p.archive) { toast("Catch-up isn't available for this programme"); return }
@@ -682,7 +790,7 @@ private fun App() {
     }
 
     // ---- derived lists
-    val cats = remember(catCache[tab], hiddenCats, showHidden, renames, catOrder, sortAz, tab) { orderedCats(tab) }
+    val cats = remember(catCache[tab], hiddenCats, showHidden, renames, catOrder, sortAz, tab, kidsMode, kidsCats) { orderedCats(tab) }
     val kindNow = tab.kind() ?: Kind.LIVE
     val regionTabs = remember(cats, pinnedCats, kindNow) {
         val byRegion = cats.groupingBy { regionOf(it.name) }.eachCount().toList()
@@ -706,9 +814,12 @@ private fun App() {
             CatRow(c, catName(kind, c), counts[kind]?.get(c.id), k in pinnedCats, catLocked(kind, c), k in hiddenCats)
         }
     }
+    val groupRows = remember(groups, entries) {
+        groups.map { (id, name) -> CatRow(Category("g:$id", name), name, store.list("grp_$id").size, false, false, false) }
+    }
     val favoriteEntries = remember(favorites) { favorites.mapNotNull(::decodeEntry) }
     val recentEntries = remember(history) { history.mapNotNull(::decodeEntry) }
-    val searching = tab == Tab.LIVE && query.length >= 2
+    val searching = tab == Tab.LIVE && query.length >= 2 && !kidsMode
     val baseEntries = if (tab == Tab.FAVORITES) favoriteEntries else entries
     val shownEntries = remember(
         baseEntries, query, hiddenEntries, showHidden, renames, sortAz, unlocked, hasPin, lockAdult, lockedCats, searching, allLive, tab, sortMode,
@@ -725,7 +836,10 @@ private fun App() {
         }
         if (sortMode == 0 && sortAz && tab.browsable() && !searching) sorted.sortedBy { nameOf(it).lowercase() } else sorted
     }
-    val guide = remember(provider) { provider?.let { GuideData(it) } }
+    val guide = remember(provider, epgShift) {
+        provider?.epgOffsetMs = epgShift * 3_600_000L
+        provider?.let { GuideData(it) }
+    }
     val guideChannels = if (tab == Tab.LIVE) shownEntries.filter { it.kind == Kind.LIVE }
     else favoriteEntries.filter { it.kind == Kind.LIVE && visible(it) }
 
@@ -784,7 +898,7 @@ private fun App() {
             else if (player.isPlaying) store.setLong(posKey(e), pos)
         }
     }
-    LaunchedEffect(current, now / 300_000) {
+    LaunchedEffect(current, now / 300_000, epgShift) {
         val e = current
         val p = provider
         epg = if (e != null && p != null && e.isLiveNow) {
@@ -948,7 +1062,10 @@ private fun App() {
     BackHandler(enabled = panelOpen) { panelOpen = false }
     BackHandler(enabled = nextUp != null) { nextUp = null }
     BackHandler(enabled = searchOpen) { searchOpen = false; listVersion++ }
-    BackHandler(enabled = pickerOpen) { store.setString("picked", "1"); pickerOpen = false; listVersion++ }
+    BackHandler(enabled = pickerOpen) {
+        store.setString("picked", "1"); pickerOpen = false; listVersion++
+        if (pickerKids) { pickerKids = false; homeShelves = emptyList(); provider?.let { loadHome(it) } }
+    }
     BackHandler(enabled = appearanceOpen) { appearanceOpen = false; listVersion++ }
 
     // ---- dialogs UI
@@ -969,7 +1086,7 @@ private fun App() {
     }
     textPrompt?.let { TextPromptDialog(it) { textPrompt = null } }
 
-    menuTarget?.let { target ->
+    menuTarget?.takeIf { !kidsMode }?.let { target ->
         when (target) {
             is MenuTarget.EntryT -> {
                 val e = target.entry
@@ -978,6 +1095,10 @@ private fun App() {
                     add(MenuItem(if (k in favKeys) "Remove from favorites" else "Add to favorites") { toggleFavorite(e) })
                     if (e.kind == Kind.MOVIE || e.kind == Kind.SERIES) {
                         add(MenuItem(if (k in myKeys) "Remove from My list" else "Add to My list") { toggleMyList(e) })
+                    }
+                    if (e.kind == Kind.LIVE) add(MenuItem("Add to group…", close = false) { menuTarget = MenuTarget.AddToGroupT(e) })
+                    if (e.kind == Kind.LIVE && category?.id?.startsWith("g:") == true) {
+                        add(MenuItem("Remove from this group") { removeFromGroup(category!!.id.removePrefix("g:"), e) })
                     }
                     add(MenuItem("Rename…") { textPrompt = TextPrompt("Rename", nameOf(e)) { rename(k, it) } })
                     if (k in renames) add(MenuItem("Reset name") { rename(k, "") })
@@ -988,6 +1109,25 @@ private fun App() {
                     }
                 }) { menuTarget = null }
             }
+            is MenuTarget.AddToGroupT -> ActionMenuDialog("Add to group", buildList {
+                groups.forEach { (id, name) -> add(MenuItem(name) { addToGroup(id, target.entry) }) }
+                add(MenuItem("+ New group…", close = false) {
+                    menuTarget = null
+                    textPrompt = TextPrompt("Group name", "") { n -> if (n.isNotBlank()) addToGroup(newGroup(n.trim()), target.entry) }
+                })
+            }) { menuTarget = null }
+            is MenuTarget.GroupT -> ActionMenuDialog(groups[target.id] ?: "Group", listOf(
+                MenuItem("Rename…") {
+                    textPrompt = TextPrompt("Group name", groups[target.id].orEmpty()) { n ->
+                        if (n.isNotBlank()) {
+                            groups = groups + (target.id to n.trim())
+                            store.setMap("groups", groups)
+                            if (category?.id == "g:${target.id}") category = Category("g:${target.id}", n.trim())
+                        }
+                    }
+                },
+                MenuItem("Delete group") { deleteGroup(target.id) },
+            )) { menuTarget = null }
             is MenuTarget.CatT -> {
                 val kind = target.kind
                 val c = target.cat
@@ -1012,6 +1152,27 @@ private fun App() {
         }
     }
 
+    dueReminder?.let { r ->
+        ActionMenuDialog("Starting now: ${r.title}", listOf(
+            MenuItem("Watch on ${nameOf(r.channel)}") { guideOpen = false; playNow(r.channel, true) },
+            MenuItem("Dismiss") {},
+        )) { dueReminder = null }
+    }
+    if (remindersOpen) {
+        val fmt = remember { java.text.SimpleDateFormat("EEE h:mm a", java.util.Locale.getDefault()) }
+        val list = reminders.mapNotNull(::decodeReminder).sortedBy { it.start }
+        ActionMenuDialog("Reminders", buildList {
+            if (list.isEmpty()) add(MenuItem("None yet. Open the Guide and select an upcoming programme.", enabled = false) {})
+            list.forEach { r ->
+                add(MenuItem("${fmt.format(java.util.Date(r.start))}  ${r.title}  ·  ${nameOf(r.channel)}  (remove)", close = false) {
+                    reminders = reminders.filter { s -> decodeReminder(s)?.let { it.channel.id == r.channel.id && it.start == r.start } != true }
+                    store.setList("reminders", reminders)
+                })
+            }
+            add(MenuItem("Close") {})
+        }) { remindersOpen = false }
+    }
+
     if (showOptions) {
         @Suppress("UNUSED_EXPRESSION") tracksTick
         val e = current
@@ -1021,6 +1182,7 @@ private fun App() {
             "Player options",
             buildList {
                 add(MenuItem(streamDetails(player), enabled = false) {})
+                if (Build.VERSION.SDK_INT >= 26) add(MenuItem("Picture-in-picture") { (ctx as? MainActivity)?.enterPip() })
                 add(MenuItem(audioLabel(player), close = false) { cycleAudio(player); tracksTick++ })
                 add(MenuItem(textLabel(player), close = false) { cycleText(player); tracksTick++ })
                 add(MenuItem("Picture: ${RESIZES[resizeIdx].second}", close = false) {
@@ -1049,7 +1211,8 @@ private fun App() {
     }
 
     fun openSettings() {
-        if (hasPin && !unlocked) requirePin("Enter PIN for settings") { showSettings = true } else showSettings = true
+        if (kidsMode) requirePin("Parent PIN") { showSettings = true }
+        else if (hasPin && !unlocked) requirePin("Enter PIN for settings") { showSettings = true } else showSettings = true
     }
     fun newPinFlow() {
         pinError = null
@@ -1098,7 +1261,33 @@ private fun App() {
                 add(MenuItem("Account & subscription…") { account = null; accountOpen = true; loadAccount() })
                 add(MenuItem("Check for updates…") { updateOpen = true; checkUpdates(false) })
                 add(MenuItem("Appearance…") { appearanceOpen = true })
-                add(MenuItem("Choose categories…") { pickerTab = 0; pickerOpen = true })
+                add(MenuItem("Choose categories…") { pickerKids = false; pickerTab = 0; pickerOpen = true })
+                add(MenuItem("Kids profile: ${if (kidsMode) "on" else "off"}", close = false) {
+                    if (!kidsMode) {
+                        if (!hasPin) toast("Set a parental PIN first, then turn this on")
+                        else {
+                            store.setKids(activeProfile, true); kidsMode = true
+                            resetBrowsing(); homeShelves = emptyList()
+                            pickerKids = true; pickerTab = 0; pickerOpen = true; showSettings = false
+                        }
+                    } else {
+                        store.setKids(activeProfile, false); kidsMode = false
+                        resetBrowsing(); provider?.let { loadHome(it) }
+                    }
+                })
+                if (kidsMode) add(MenuItem("Kids: choose allowed categories…") { pickerKids = true; pickerTab = 0; pickerOpen = true })
+                add(MenuItem("Reminders (${reminders.size})…") { remindersOpen = true })
+                add(MenuItem("Guide time: ${if (epgShift >= 0) "+" else ""}$epgShift h  (select = +1 h)", close = false) {
+                    epgShift = if (epgShift >= 12) -12 else epgShift + 1; store.setInt("epgShift", epgShift)
+                })
+                add(MenuItem("Guide time: −1 h", close = false) {
+                    epgShift = if (epgShift <= -12) 12 else epgShift - 1; store.setInt("epgShift", epgShift)
+                })
+                add(MenuItem("Movie info (TMDB key): ${if (tmdbKey.isBlank()) "not set" else "on"}") {
+                    textPrompt = TextPrompt("TMDB API key (free at themoviedb.org)", tmdbKey) { k ->
+                        tmdbKey = k.trim(); store.setGString("tmdbKey", tmdbKey)
+                    }
+                })
                 add(MenuItem("Match frame rate: ${if (matchFps) "on" else "off"}", close = false) {
                     matchFps = !matchFps; store.setFlag("matchFps", matchFps)
                 })
@@ -1306,24 +1495,30 @@ private fun App() {
             val pt = tabs[ix]
             val pk = kinds[ix]
             val pcats = catCache[pt].orEmpty().map { c ->
-                PickerCat(c, regionOf(c.name), counts[pk]?.get(c.id), catKey(pk, c.id) !in hiddenCats)
+                PickerCat(c, regionOf(c.name), counts[pk]?.get(c.id), if (pickerKids) catKey(pk, c.id) in kidsCats else catKey(pk, c.id) !in hiddenCats)
             }
             CategoryPicker(
                 tabLabels = tabs.map { t ->
                     (if (t == Tab.LIVE) "Live" else if (t == Tab.MOVIES) "Movies" else "Series") + "  ·  " + (catCache[t]?.size ?: "…")
                 },
                 tab = ix, onTab = { pickerTab = it }, cats = pcats,
-                onToggle = { setHiddenMany(pk, listOf(it.cat.id), it.checked) },
-                onToggleRegion = { r, check -> setHiddenMany(pk, pcats.filter { c -> c.region == r }.map { c -> c.cat.id }, !check) },
+                onToggle = { setPicked(pk, listOf(it.cat.id), !it.checked) },
+                onToggleRegion = { r, check -> setPicked(pk, pcats.filter { c -> c.region == r }.map { c -> c.cat.id }, check) },
                 onQuick = { which ->
                     when (which) {
-                        0 -> setHiddenMany(pk, pcats.filter { isAdult(it.cat.name) }.map { it.cat.id }, true)
-                        1 -> setHiddenMany(pk, pcats.map { it.cat.id }, false)
-                        else -> setHiddenMany(pk, pcats.map { it.cat.id }, true)
+                        0 -> setPicked(pk, pcats.filter { isAdult(it.cat.name) }.map { it.cat.id }, false)
+                        1 -> setPicked(pk, pcats.map { it.cat.id }, true)
+                        else -> setPicked(pk, pcats.map { it.cat.id }, false)
                     }
                 },
-                onDone = { store.setString("picked", "1"); pickerOpen = false; listVersion++ },
-                onSkip = { store.setString("picked", "1"); pickerOpen = false; listVersion++ },
+                title = if (pickerKids) "Allowed for kids" else "Choose your categories",
+                subtitle = if (pickerKids) "Only these show in this profile. Open Settings with your PIN to change them."
+                else "Pick the ones you actually watch. Everything else is hidden, never deleted, and you can reopen this from Settings.",
+                onDone = {
+                    store.setString("picked", "1"); pickerOpen = false; listVersion++
+                    if (pickerKids) { pickerKids = false; homeShelves = emptyList(); provider?.let { loadHome(it) } }
+                },
+                onSkip = { store.setString("picked", "1"); pickerOpen = false; pickerKids = false; listVersion++ },
             )
         } else if (appearanceOpen) {
             AppearanceScreen(
@@ -1377,6 +1572,8 @@ private fun App() {
                     channels = guideChannels, nameOf = ::nameOf, guide = guide, now = now,
                     onPlay = { ch -> playNow(ch, true); guideOpen = false },
                     onCatchUp = { ch, prog -> playCatchUp(ch, prog); if (prog.archive) guideOpen = false },
+                    reminderKeys = reminderKeys,
+                    onRemind = ::toggleReminder,
                     onClose = { guideOpen = false; listVersion++ },
                 )
         } else if (detailEntry != null) {
@@ -1409,7 +1606,7 @@ private fun App() {
                         RailItem(RailIconType.FAVORITES, "Favorites", tab == Tab.FAVORITES),
                         RailItem(RailIconType.GUIDE, "Guide", false),
                         RailItem(RailIconType.SETTINGS, "Settings", false),
-                    ),
+                    ).filter { !kidsMode || it.icon != RailIconType.SEARCH },
                     modifier = Modifier.width(if (isTv) 84.dp else 66.dp),
                 ) { icon ->
                     when (icon) {
@@ -1473,8 +1670,12 @@ private fun App() {
                                 panelRows,
                                 "ALL  ·  ${panelRows.size} of ${cats.size}", category?.id,
                                 onSelect = { openCategory(Kind.LIVE, it.cat) },
-                                onMenu = { menuTarget = MenuTarget.CatT(Kind.LIVE, it.cat) },
+                                onMenu = {
+                                    menuTarget = if (it.cat.id.startsWith("g:")) MenuTarget.GroupT(it.cat.id.removePrefix("g:"))
+                                    else MenuTarget.CatT(Kind.LIVE, it.cat)
+                                },
                                 listState = catListState,
+                                groups = if (catRegion == "*all" && catFilter.isBlank()) groupRows else emptyList(),
                             )
                             Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1.15f).fillMaxHeight()) {

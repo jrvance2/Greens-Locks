@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -310,6 +311,15 @@ fun DetailScreen(
             Brush.linearGradient(listOf(accentWash(0.26f), Palette.bg, accentWash(0.12f, true)))
         )
     ) {
+        val backdrop = detail?.backdrop.orEmpty()
+        if (backdrop.isNotBlank()) {
+            Artwork(backdrop, "", Modifier.fillMaxSize().alpha(0.5f))
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.horizontalGradient(listOf(Palette.bg.copy(alpha = 0.97f), Palette.bg.copy(alpha = 0.6f), Color.Transparent))
+                )
+            )
+        }
         Row(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 28.dp)) {
             Artwork(
                 poster, name,
@@ -321,9 +331,13 @@ fun DetailScreen(
                 if (detail == null) {
                     Text("Loading details…", color = Palette.muted, modifier = Modifier.padding(top = 6.dp))
                 } else {
+                    if (detail.tagline.isNotBlank()) Text(detail.tagline, color = Palette.muted, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, modifier = Modifier.padding(top = 4.dp))
                     if (detail.meta.isNotBlank()) Text(detail.meta, color = Palette.accent, modifier = Modifier.padding(top = 6.dp))
                     if (detail.plot.isNotBlank()) {
                         Text(detail.plot, maxLines = 5, overflow = TextOverflow.Ellipsis, color = Palette.text.copy(alpha = 0.85f), modifier = Modifier.padding(top = 10.dp))
+                    }
+                    if (detail.cast.isNotEmpty()) {
+                        Text("Cast: " + detail.cast.take(8).joinToString(", "), maxLines = 2, overflow = TextOverflow.Ellipsis, color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
                     }
                 }
                 Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {

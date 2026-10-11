@@ -56,6 +56,8 @@ fun GuideScreen(
     now: Long,
     onPlay: (Entry) -> Unit,
     onCatchUp: (Entry, Programme) -> Unit,
+    reminderKeys: Set<String>,
+    onRemind: (Entry, Programme) -> Unit,
     onClose: () -> Unit,
 ) {
     val hs = rememberScrollState()
@@ -107,6 +109,8 @@ fun GuideScreen(
                     windowStart = windowStart, now = now, query = query, hs = hs,
                     firstFocus = if (i == 0) Modifier.focusRequester(first) else Modifier,
                     onCatchUp = { p -> onCatchUp(ch, p) },
+                    isReminded = { p -> "${ch.id}:${p.start}" in reminderKeys },
+                    onRemind = { p -> onRemind(ch, p) },
                 ) { onPlay(ch) }
             }
         }
@@ -123,6 +127,8 @@ private fun GuideRow(
     hs: ScrollState,
     firstFocus: Modifier,
     onCatchUp: (Programme) -> Unit,
+    isReminded: (Programme) -> Boolean,
+    onRemind: (Programme) -> Unit,
     onPlay: () -> Unit,
 ) {
     val end = windowStart + WINDOW
@@ -155,6 +161,7 @@ private fun GuideRow(
                             when {
                                 past -> onCatchUp(p)
                                 airing -> onPlay()
+                                else -> onRemind(p)
                             }
                         }) { focused ->
                             Column(
@@ -175,7 +182,7 @@ private fun GuideRow(
                                     color = if (past) Palette.muted else Palette.text,
                                 )
                                 Text(
-                                    "${hhmm(p.start)} – ${hhmm(p.stop)}" + if (past && p.archive) "  ↺" else "",
+                                    "${hhmm(p.start)} – ${hhmm(p.stop)}" + (if (past && p.archive) "  ↺" else "") + (if (isReminded(p)) "  🔔" else ""),
                                     maxLines = 1, color = Palette.muted, style = MaterialTheme.typography.bodySmall,
                                 )
                             }

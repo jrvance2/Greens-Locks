@@ -96,6 +96,7 @@ fun CategoryPanel(
     onSelect: (CatRow) -> Unit,
     onMenu: (CatRow) -> Unit,
     listState: LazyListState,
+    groups: List<CatRow> = emptyList(),
 ) {
     Column(modifier.clip(RoundedCornerShape(16.dp)).background(Palette.surface).padding(10.dp)) {
         OutlinedTextField(
@@ -106,6 +107,10 @@ fun CategoryPanel(
             items(regions) { (id, label) -> Chip(label, region == id) { onRegion(id) } }
         }
         LazyColumn(Modifier.fillMaxSize(), state = listState) {
+            if (groups.isNotEmpty()) {
+                item { SmallLabel("MY GROUPS") }
+                items(groups) { r -> CatRowItem(r, r.cat.id == selectedId, { onSelect(r) }, { onMenu(r) }) }
+            }
             if (pinned.isNotEmpty()) {
                 item { SmallLabel("PINNED") }
                 items(pinned) { r -> CatRowItem(r, r.cat.id == selectedId, { onSelect(r) }, { onMenu(r) }) }
@@ -154,6 +159,8 @@ fun CategoryPicker(
     onQuick: (Int) -> Unit,
     onDone: () -> Unit,
     onSkip: () -> Unit,
+    title: String = "Choose your categories",
+    subtitle: String = "Pick the ones you actually watch. Everything else is hidden, never deleted, and you can reopen this from Settings.",
 ) {
     var filter by remember(tab) { mutableStateOf("") }
     val first = remember { FocusRequester() }
@@ -176,11 +183,8 @@ fun CategoryPicker(
     val shownChannels = cats.filter { it.checked }.mapNotNull { it.count }.sum()
 
     Column(Modifier.fillMaxSize().background(Palette.bg).padding(horizontal = 28.dp, vertical = 20.dp)) {
-        Text("Choose your categories", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-        Text(
-            "Pick the ones you actually watch. Everything else is hidden, never deleted, and you can reopen this from Settings.",
-            color = Palette.muted, modifier = Modifier.padding(top = 4.dp),
-        )
+        Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+        Text(subtitle, color = Palette.muted, modifier = Modifier.padding(top = 4.dp))
         Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             tabLabels.forEachIndexed { i, t -> Chip(t, tab == i) { onTab(i) }; Spacer(Modifier.width(8.dp)) }
             Spacer(Modifier.weight(1f))

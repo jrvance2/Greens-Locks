@@ -130,12 +130,19 @@ class Store(private val prefs: SharedPreferences) {
     // ---- global settings
     fun flag(name: String, def: Boolean) = prefs.getBoolean(name, def)
     fun setFlag(name: String, v: Boolean) { prefs.edit().putBoolean(name, v).apply() }
+    fun isKids(id: Int) = (prefs.getString("kidsProfiles", "") ?: "").split(",").contains(id.toString())
+    fun setKids(id: Int, on: Boolean) {
+        val ids = (prefs.getString("kidsProfiles", "") ?: "").split(",").filter { it.isNotBlank() && it != id.toString() }
+        prefs.edit().putString("kidsProfiles", (if (on) ids + id.toString() else ids).joinToString(",")).apply()
+    }
+    fun gString(name: String): String? = prefs.getString(name, null)
+    fun setGString(name: String, v: String) { prefs.edit().putString(name, v).apply() }
     fun int(name: String, def: Int) = prefs.getInt(name, def)
     fun setInt(name: String, v: Int) { prefs.edit().putInt(name, v).apply() }
 
     // ---- backup / restore (favorites, hidden/pinned categories, names, layout and settings; never logins or PIN)
-    private val backupLists = listOf("fav2", "hist", "hidCats", "hidEntries", "lockCats", "pinCats", "mylist")
-    private val backupMaps = listOf("renames", "catOrder")
+    private val backupLists = listOf("fav2", "hist", "hidCats", "hidEntries", "lockCats", "pinCats", "mylist", "reminders", "kidsCats")
+    private val backupMaps = listOf("renames", "catOrder", "groups")
     private val backupInts = listOf("accent", "bg", "cards", "text", "anim", "start", "buffer", "resize", "subSize", "sortMode")
     private val backupFlags = listOf("sortAz", "showHidden", "lockAdult", "autoNext", "matchFps", "liveTs")
 
@@ -143,6 +150,7 @@ class Store(private val prefs: SharedPreferences) {
         val root = JSONObject().put("app", "VanceTV").put("version", 1)
         val lists = JSONObject()
         backupLists.forEach { n -> lists.put(n, JSONArray(if (n == "fav2") favorites() else list(n))) }
+        map("groups").keys.forEach { id -> lists.put("grp_$id", JSONArray(list("grp_$id"))) }
         val maps = JSONObject()
         backupMaps.forEach { n -> maps.put(n, JSONObject(map(n))) }
         val ints = JSONObject()
@@ -157,7 +165,9 @@ class Store(private val prefs: SharedPreferences) {
         val root = runCatching { JSONObject(text) }.getOrNull() ?: return false
         if (root.optString("app") != "VanceTV") return false
         root.optJSONObject("lists")?.let { o ->
-            backupLists.forEach { n -> o.optJSONArray(n)?.let { a -> setList(n, List(a.length()) { a.getString(it) }) } }
+            (backupLists + o.keys().asSequence().filter { it.startsWith("grp_") }).forEach { n ->
+                o.optJSONArray(n)?.let { a -> setList(n, List(a.length()) { a.getString(it) }) }
+            }
         }
         root.optJSONObject("maps")?.let { o ->
             backupMaps.forEach { n ->

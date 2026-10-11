@@ -30,6 +30,8 @@ interface Provider {
     suspend fun counts(kind: Kind): Map<String, Int>
     /** HLS ("m3u8") or transport stream ("ts") for live channels. */
     var liveFormat: String
+    /** Added to every programme time, for providers whose guide is in the wrong time zone. */
+    var epgOffsetMs: Long
     suspend fun account(): AccountInfo?
     /** Programmes around now, including past ones that may be available for catch-up. */
     suspend fun guideEpg(entry: Entry, pastMs: Long, futureMs: Long): List<Programme>
@@ -57,6 +59,7 @@ class XtreamProvider(
 ) : Provider {
     override val supportsVod = true
     override var liveFormat: String = "m3u8"
+    override var epgOffsetMs: Long = 0L
     private var timezone: String = ""
 
     private fun api(action: String? = null, extra: String = ""): String =
@@ -209,7 +212,7 @@ class XtreamProvider(
         val raw = o.optString("title")
         val title = runCatching { String(Base64.decode(raw, Base64.DEFAULT), Charsets.UTF_8) }.getOrDefault(raw)
         return Programme(
-            title, o.optLong("start_timestamp") * 1000, o.optLong("stop_timestamp") * 1000,
+            title, o.optLong("start_timestamp") * 1000 + epgOffsetMs, o.optLong("stop_timestamp") * 1000 + epgOffsetMs,
             archive = o.optInt("has_archive") == 1,
         )
     }
@@ -302,6 +305,7 @@ class XtreamProvider(
 class M3uProvider(private val channels: List<Channel>) : Provider {
     override val supportsVod = false
     override var liveFormat: String = "m3u8"
+    override var epgOffsetMs: Long = 0L
     override suspend fun account(): AccountInfo? = null
     override suspend fun guideEpg(entry: Entry, pastMs: Long, futureMs: Long): List<Programme> = emptyList()
     override suspend fun nextEpisode(current: Entry): Entry? = null
