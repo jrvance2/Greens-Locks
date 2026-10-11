@@ -246,6 +246,11 @@ private fun App() {
     var pickerKids by remember { mutableStateOf(false) }
     var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
     var mergeDupes by remember { mutableStateOf(store.flag("mergeDupes", true)) }
+    var recOpen by remember { mutableStateOf(false) }
+    var recFile by remember { mutableStateOf<java.io.File?>(null) }
+    var programTarget by remember { mutableStateOf<Pair<Entry, Programme>?>(null) }
+    var multiList by remember { mutableStateOf(emptyList<Entry>()) }
+    var multiOpen by remember { mutableStateOf(false) }
     var kidsLimit by remember { mutableIntStateOf(store.int("kidsLimit", 0)) }
     val dayKey = { java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date()) }
     var kidsUsed by remember { mutableLongStateOf(store.long("kidsUsed_${dayKey()}")) }
@@ -606,6 +611,28 @@ private fun App() {
                 val t = runCatching { Tmdb.lookup(tmdbKey, e.title, e.kind == Kind.SERIES) }.getOrNull()
                 if (t != null && detailEntry?.key() == e.key()) detail = Tmdb.merge(detail, t)
             }
+        }
+    }
+
+    fun recUrl(e: Entry) = provider?.streamUrl(e.copy(start = 0))?.replace(".m3u8", ".ts").orEmpty()
+    fun recordNow(e: Entry, durMs: Long, label: String) {
+        val url = recUrl(e)
+        if (url.isBlank()) { toast("Can't record this channel"); return }
+        Recorder.startNow(ctx, RecJob("live:${e.id}", url, label, System.currentTimeMillis(), durMs))
+        toast("Recording started: $label")
+    }
+    fun scheduleRecording(ch: Entry, p: Programme) {
+        val url = recUrl(ch)
+        if (url.isBlank()) { toast("Can't record this channel"); return }
+        Recorder.schedule(ctx, RecJob("${ch.id}:${p.start}", url, "${nameOf(ch)} ${p.title}", p.start - 30_000, p.stop - p.start + 150_000))
+        toast("Recording scheduled for ${p.title}")
+    }
+    fun addToMulti(e: Entry) {
+        when {
+            e.kind != Kind.LIVE -> toast("Multiview is for live channels")
+            multiList.any { it.key() == e.key() } -> toast("Already in multiview")
+            multiList.size >= 4 -> toast("Multiview holds 4 channels")
+            else -> { multiList = multiList + e; toast("Added to multiview (${multiList.size}/4)") }
         }
     }
 
@@ -982,8 +1009,8 @@ private fun App() {
                 if (liveHistory.size > 10) liveHistory.removeAt(0)
             }
         }
-        if (!e.isCatchUp) pushHistory(e)
-        player.setMediaItem(MediaItem.fromUri(p.streamUrl(e)))
+        if (!e.isCatchUp && !e.id.startsWith("file://")) pushHistory(e)
+        player.setMediaItem(MediaItem.fromUri(if (e.id.startsWith("file://")) e.id else p.streamUrl(e)))
         player.prepare()
         if (e.kind != Kind.LIVE) {
             val saved = store.long(posKey(e))
@@ -1165,7 +1192,7 @@ private fun App() {
     LaunchedEffect(fullscreen) { if (fullscreen) { delay(50); runCatching { rootFocus.requestFocus() } } }
     val liveFocusIdx = shownEntries.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
 
-    val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null) || pickerOpen || appearanceOpen || searchOpen
+    val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null) || pickerOpen || appearanceOpen || searchOpen || multiOpen
     BackHandler(enabled = showSetup && provider != null) { showSetup = false }
     BackHandler(enabled = provider != null && !showSetup && tab != Tab.HOME && !overlayActive) { openTab(Tab.HOME) }
     BackHandler(enabled = detailEntry != null) { closeDetail() }
@@ -1178,6 +1205,7 @@ private fun App() {
         store.setString("picked", "1"); pickerOpen = false; listVersion++
         if (pickerKids) { pickerKids = false; homeShelves = emptyList(); provider?.let { loadHome(it) } }
     }
+    BackHandler(enabled = multiOpen) { multiOpen = false; listVersion++ }
     BackHandler(enabled = appearanceOpen) { appearanceOpen = false; listVersion++ }
 
     // ---- dialogs UI
@@ -1208,6 +1236,7 @@ private fun App() {
                     if (e.kind == Kind.MOVIE || e.kind == Kind.SERIES) {
                         add(MenuItem(if (k in myKeys) "Remove from My list" else "Add to My list") { toggleMyList(e) })
                     }
+                    if (e.kind == Kind.LIVE) add(MenuItem("Add to multiview (${multiList.size}/4)") { addToMulti(e) })
                     if (e.kind == Kind.LIVE) add(MenuItem("Add to group…", close = false) { menuTarget = MenuTarget.AddToGroupT(e) })
                     if (e.kind == Kind.LIVE && category?.id?.startsWith("g:") == true) {
                         add(MenuItem("Remove from this group") { removeFromGroup(category!!.id.removePrefix("g:"), e) })
@@ -1264,6 +1293,43 @@ private fun App() {
         }
     }
 
+    programTarget?.let { (ch, p) ->
+        val id = "${ch.id}:${p.start}"
+        val reminded = id in reminderKeys
+        val scheduled = Recorder.jobs(ctx).any { it.id == id }
+        ActionMenuDialog(p.title, buildList {
+            add(MenuItem(if (reminded) "Remove reminder" else "Remind me") { toggleReminder(ch, p) })
+            if (ch.kind == Kind.LIVE && !kidsMode) add(MenuItem(if (scheduled) "Cancel recording" else "Record this programme") {
+                if (scheduled) { Recorder.cancel(ctx, id); toast("Recording cancelled") } else scheduleRecording(ch, p)
+            })
+        }) { programTarget = null }
+    }
+    if (recOpen) {
+        val fmt = remember { java.text.SimpleDateFormat("EEE h:mm a", java.util.Locale.getDefault()) }
+        val files = Recorder.files(ctx)
+        val jobs = Recorder.jobs(ctx)
+        ActionMenuDialog("Recordings", buildList {
+            Recorder.active.entries.forEach { (_, st) ->
+                add(MenuItem("● Recording: ${st.name}  (select to stop)", close = false) { st.stop = true; recOpen = false })
+            }
+            jobs.forEach { j ->
+                add(MenuItem("Scheduled ${fmt.format(java.util.Date(j.startMs))}  ${j.name}  (select to cancel)", close = false) {
+                    Recorder.cancel(ctx, j.id); recOpen = false
+                })
+            }
+            files.forEach { f ->
+                add(MenuItem("${f.name.removeSuffix(".ts")}  ·  ${f.length() / 1_000_000} MB", close = false) { recFile = f; recOpen = false })
+            }
+            if (files.isEmpty() && jobs.isEmpty() && Recorder.active.isEmpty()) add(MenuItem("Nothing recorded yet", enabled = false) {})
+            add(MenuItem("Close") {})
+        }) { recOpen = false }
+    }
+    recFile?.let { f ->
+        ActionMenuDialog(f.name, listOf(
+            MenuItem("Play") { playNow(Entry(Kind.MOVIE, "file://${f.absolutePath}", f.name.removeSuffix(".ts"), "ts"), true) },
+            MenuItem("Delete") { f.delete() },
+        )) { recFile = null }
+    }
     if (timesUp) {
         ActionMenuDialog("Screen time is up for today", listOf(
             MenuItem("Parent PIN: add 30 minutes") {
@@ -1310,6 +1376,17 @@ private fun App() {
             "Player options",
             buildList {
                 add(MenuItem(streamDetails(player), enabled = false) {})
+                if (e != null && e.isLiveNow && !kidsMode) {
+                    val rid = "live:${e.id}"
+                    if (Recorder.active.containsKey(rid)) add(MenuItem("■ Stop recording") { Recorder.active[rid]?.stop = true })
+                    else {
+                        if (curProg != null) add(MenuItem("● Record rest of this programme") {
+                            recordNow(e, curProg.stop - System.currentTimeMillis() + 120_000, "${nameOf(e)} ${curProg.title}")
+                        })
+                        add(MenuItem("● Record 60 minutes") { recordNow(e, 3_600_000L, nameOf(e)) })
+                    }
+                    add(MenuItem("Add to multiview (${multiList.size}/4)") { addToMulti(e) })
+                }
                 if (Build.VERSION.SDK_INT >= 26) add(MenuItem("Picture-in-picture") { (ctx as? MainActivity)?.enterPip() })
                 add(MenuItem(audioLabel(player), close = false) { cycleAudio(player); tracksTick++ })
                 add(MenuItem(textLabel(player), close = false) { cycleText(player); tracksTick++ })
@@ -1418,6 +1495,8 @@ private fun App() {
                         textPrompt = TextPrompt("Code shown on the other device", "") { code -> pullSync(addr, code) }
                     }
                 })
+                add(MenuItem("Recordings (${Recorder.active.size} active, ${Recorder.jobs(ctx).size} scheduled)…") { recOpen = true })
+                add(MenuItem("Multiview (${multiList.size}/4)…") { loadAccount(); player.pause(); multiOpen = true })
                 add(MenuItem("Reminders (${reminders.size})…") { remindersOpen = true })
                 add(MenuItem("Guide time: ${if (epgShift >= 0) "+" else ""}$epgShift h  (select = +1 h)", close = false) {
                     epgShift = if (epgShift >= 12) -12 else epgShift + 1; store.setInt("epgShift", epgShift)
@@ -1662,6 +1741,17 @@ private fun App() {
                 },
                 onSkip = { store.setString("picked", "1"); pickerOpen = false; pickerKids = false; listVersion++ },
             )
+        } else if (multiOpen) {
+            MultiViewScreen(
+                entries = multiList,
+                urlOf = { provider?.streamUrl(it.copy(start = 0)).orEmpty() },
+                nameOf = ::nameOf,
+                warning = account?.let { a ->
+                    if (a.maxConnections in 1 until multiList.size) "Your plan allows ${a.maxConnections} stream(s); ${multiList.size} tiles may not all play." else null
+                },
+                onOpen = { e -> multiOpen = false; playNow(e, true) },
+                onRemove = { e -> multiList = multiList.filter { it.key() != e.key() } },
+            )
         } else if (appearanceOpen) {
             AppearanceScreen(
                 accentIdx, bgIdx, cardIdx, textIdx, animIdx, startIdx,
@@ -1715,7 +1805,7 @@ private fun App() {
                     onPlay = { ch -> playNow(ch, true); guideOpen = false },
                     onCatchUp = { ch, prog -> playCatchUp(ch, prog); if (prog.archive) guideOpen = false },
                     reminderKeys = reminderKeys,
-                    onRemind = ::toggleReminder,
+                    onRemind = { ch, p -> programTarget = ch to p },
                     onClose = { guideOpen = false; listVersion++ },
                 )
         } else if (detailEntry != null) {
