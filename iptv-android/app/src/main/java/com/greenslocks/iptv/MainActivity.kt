@@ -58,6 +58,10 @@ import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioCapabilities
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
@@ -252,6 +256,7 @@ private fun App() {
     var kidsCats by remember { mutableStateOf(store.list("kidsCats").toSet()) }
     var pickerKids by remember { mutableStateOf(false) }
     var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
+    var pcmAudio by remember { mutableStateOf(store.flag("pcmAudio", false)) }
     var trackPanelOpen by remember { mutableStateOf(false) }
     var trackTick by remember { mutableIntStateOf(0) }
     val trackFocus = remember { FocusRequester() }
@@ -345,13 +350,25 @@ private fun App() {
     var guideOpen by remember { mutableStateOf(false) }
 
     // ---- player
-    val player = remember(bufferMode) {
+    val player = remember(bufferMode, pcmAudio) {
         val lc = when (bufferMode) {
             0 -> DefaultLoadControl.Builder().setBufferDurationsMs(10_000, 20_000, 1_500, 3_000)
             2 -> DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 3_000, 6_000)
             else -> DefaultLoadControl.Builder()
         }.build()
-        ExoPlayer.Builder(ctx).setLoadControl(lc).build()
+        val builder = ExoPlayer.Builder(ctx).setLoadControl(lc)
+        if (pcmAudio) {
+            // Decode every audio format to plain stereo on the device instead of sending surround to the TV.
+            builder.setRenderersFactory(object : DefaultRenderersFactory(ctx) {
+                override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
+                    DefaultAudioSink.Builder(context)
+                        .setAudioCapabilities(AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES)
+                        .setEnableFloatOutput(enableFloatOutput)
+                        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                        .build()
+            })
+        }
+        builder.build()
     }
     val currentNow by rememberUpdatedState(current)
     fun variantsFor(e: Entry) = variantsOf(e, entries + allLive.orEmpty(), store.string("pref_${normName(e.title)}"))
@@ -415,6 +432,18 @@ private fun App() {
     }
 
     fun toast(msg: String) { Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show() }
+    LaunchedEffect(current) {
+        val c = current ?: return@LaunchedEffect
+        delay(7000)
+        val ex = player as? ExoPlayer ?: return@LaunchedEffect
+        if (c == current && player.isPlaying && ex.videoFormat != null && ex.audioFormat == null) {
+            val hasAudioTracks = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }
+            toast(
+                if (hasAudioTracks) "No sound: this stream's audio format isn't supported here. Try Settings → Audio output → Stereo (compatible)."
+                else "This stream has no audio track."
+            )
+        }
+    }
     LaunchedEffect(failoverTick) {
         if (failoverTick == 0) return@LaunchedEffect
         val c = current
@@ -1522,6 +1551,9 @@ private fun App() {
                 })
                 add(MenuItem("Up/Down in player: ${if (zapStrip) "channel strip" else "switch channel"}", close = false) {
                     zapStrip = !zapStrip; store.setFlag("zapStrip", zapStrip)
+                })
+                add(MenuItem("Audio output: ${if (pcmAudio) "Stereo (compatible)" else "Auto (surround)"}  — try Stereo if a stream has no sound", close = false) {
+                    pcmAudio = !pcmAudio; store.setFlag("pcmAudio", pcmAudio)
                 })
                 add(MenuItem("Merge duplicate channels (HD/4K/backup): ${if (mergeDupes) "on" else "off"}", close = false) {
                     mergeDupes = !mergeDupes; store.setFlag("mergeDupes", mergeDupes)
