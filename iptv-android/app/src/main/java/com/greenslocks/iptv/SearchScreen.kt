@@ -47,10 +47,10 @@ fun SearchScreen(
     val firstIdx = items.indexOfFirst { it is SItem.Hit }
     Column(Modifier.fillMaxSize().background(Palette.bg).padding(horizontal = 32.dp, vertical = 20.dp)) {
         Text("Search", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-        OutlinedTextField(
+        TvTextField(
             value = query, onValueChange = onQuery, singleLine = true,
-            label = { Text("Channels, movies and series") },
-            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).focusRequester(field),
+            label = "Channels, movies and series",
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp), focusRequester = field,
         )
         if (status != null) Text(status, color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
         if (query.isNotBlank() && items.isEmpty() && status == null) {

@@ -84,9 +84,9 @@ fun GuideScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("TV Guide", style = MaterialTheme.typography.headlineSmall, color = Palette.accent)
             Spacer(Modifier.width(16.dp))
-            OutlinedTextField(
+            TvTextField(
                 value = query, onValueChange = { query = it }, singleLine = true,
-                label = { Text("Find a programme") }, modifier = Modifier.weight(1f),
+                label = "Find a programme", modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(8.dp))
             ActionButton("Close", primary = false, onClick = onClose)

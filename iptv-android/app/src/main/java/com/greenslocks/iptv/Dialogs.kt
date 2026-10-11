@@ -62,9 +62,9 @@ fun TextPromptDialog(prompt: TextPrompt, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text(prompt.title) },
         text = {
-            OutlinedTextField(
-                value = value, onValueChange = { value = it }, singleLine = true,
-                modifier = Modifier.focusRequester(focus),
+            TvTextField(
+                value = value, onValueChange = { value = it }, label = prompt.title,
+                modifier = Modifier.fillMaxWidth(), focusRequester = focus, startEditing = true,
             )
         },
         confirmButton = { ActionButton("OK", onClick = { prompt.onDone(value); onDismiss() }) },

@@ -99,9 +99,9 @@ fun CategoryPanel(
     groups: List<CatRow> = emptyList(),
 ) {
     Column(modifier.clip(RoundedCornerShape(16.dp)).background(Palette.surface).padding(10.dp)) {
-        OutlinedTextField(
+        TvTextField(
             value = filter, onValueChange = onFilter, singleLine = true,
-            label = { Text("Filter categories") }, modifier = Modifier.fillMaxWidth(),
+            label = "Filter categories", modifier = Modifier.fillMaxWidth(),
         )
         LazyRow(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(regions) { (id, label) -> Chip(label, region == id) { onRegion(id) } }
@@ -195,9 +195,9 @@ fun CategoryPicker(
         }
         Row(Modifier.fillMaxSize().padding(top = 12.dp)) {
             Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(16.dp)).background(Palette.surface).padding(12.dp)) {
-                OutlinedTextField(
+                TvTextField(
                     value = filter, onValueChange = { filter = it }, singleLine = true,
-                    label = { Text("Filter categories") }, modifier = Modifier.fillMaxWidth(),
+                    label = "Filter categories", modifier = Modifier.fillMaxWidth(),
                 )
                 if (cats.isEmpty()) Text("Loading categories…", color = Palette.muted, modifier = Modifier.padding(12.dp))
                 LazyColumn(Modifier.fillMaxSize().padding(top = 8.dp)) {

@@ -189,22 +189,22 @@ fun LoginScreen(
             BrandWordmark(30.sp)
             Text("Sign in with your provider login", color = Palette.muted, modifier = Modifier.padding(top = 12.dp, bottom = 18.dp))
             if (useUrl) {
-                OutlinedTextField(
+                TvTextField(
                     value = urlText, onValueChange = onUrl, singleLine = true,
-                    label = { Text("Playlist URL") }, modifier = Modifier.fillMaxWidth(),
+                    label = "Playlist URL", modifier = Modifier.fillMaxWidth(),
                 )
             } else {
-                OutlinedTextField(
+                TvTextField(
                     value = server, onValueChange = onServer, singleLine = true,
-                    label = { Text("Server (http://host:port)") }, modifier = Modifier.fillMaxWidth(),
+                    label = "Server (http://host:port)", modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedTextField(
+                TvTextField(
                     value = user, onValueChange = onUser, singleLine = true,
-                    label = { Text("Username") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    label = "Username", modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
-                OutlinedTextField(
+                TvTextField(
                     value = pass, onValueChange = onPass, singleLine = true,
-                    label = { Text("Password") },
+                    label = "Password",
                     visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
@@ -527,9 +527,9 @@ fun BrowseHeader(
         )
         trailing()
         Spacer(Modifier.width(12.dp))
-        OutlinedTextField(
+        TvTextField(
             value = query, onValueChange = onQuery, singleLine = true,
-            label = { Text(searchLabel) }, modifier = Modifier.width(searchWidth),
+            label = searchLabel, modifier = Modifier.width(searchWidth),
         )
     }
 }
