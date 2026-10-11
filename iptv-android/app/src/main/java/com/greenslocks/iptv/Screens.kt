@@ -113,24 +113,25 @@ fun IconRail(
     onItem: (RailIconType) -> Unit,
 ) {
     Column(
-        modifier.fillMaxHeight().background(Palette.surface).padding(horizontal = 8.dp, vertical = 10.dp),
+        modifier.fillMaxHeight().background(Palette.surface).verticalScroll(rememberScrollState())
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
+            Modifier.size(34.dp).clip(RoundedCornerShape(10.dp))
                 .background(Brush.linearGradient(listOf(Palette.accent, Palette.accent2))),
             contentAlignment = Alignment.Center,
         ) { Text("V", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp) }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(4.dp))
         items.forEachIndexed { _, item ->
-            FocusCard(Modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(12.dp), 1f, 2.dp, onClick = { onItem(item.icon) }) { focused ->
+            FocusCard(Modifier.fillMaxWidth().padding(vertical = 1.dp), RoundedCornerShape(12.dp), 1f, 2.dp, onClick = { onItem(item.icon) }) { focused ->
                 Column(
                     Modifier.fillMaxWidth()
                         .background(
                             if (focused) Palette.accent.copy(alpha = 0.3f)
                             else if (item.selected) Palette.accent.copy(alpha = 0.18f) else Color.Transparent
                         )
-                        .padding(vertical = 5.dp),
+                        .padding(vertical = 3.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     RailIcon(item.icon, if (item.selected || focused) Palette.accent else Palette.muted)
