@@ -1918,7 +1918,8 @@ private fun App() {
                                 heroBackdrop = ""
                                 val h = hero ?: return@LaunchedEffect
                                 if (tmdbKey.isNotBlank() && h.kind != Kind.LIVE) {
-                                    heroBackdrop = runCatching { Tmdb.lookup(tmdbKey, h.title, h.kind == Kind.SERIES)?.backdrop }.getOrNull().orEmpty()
+                                    delay(2500) // let the library and posters load first
+                                    heroBackdrop = runCatching { Tmdb.backdropFor(tmdbKey, h.title, h.kind == Kind.SERIES) }.getOrDefault("")
                                 }
                             }
                             val shownShelves = shelves.map { (t, list, w) ->

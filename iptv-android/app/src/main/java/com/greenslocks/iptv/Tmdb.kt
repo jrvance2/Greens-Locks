@@ -20,21 +20,51 @@ object Tmdb {
         return t to year
     }
 
+    private val details = java.util.concurrent.ConcurrentHashMap<String, Detail>()
+    private val backdrops = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val misses = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     private fun get(url: String): String {
-        val conn = URL(url).openConnection().apply { connectTimeout = 10000; readTimeout = 15000 }
+        val conn = URL(url).openConnection().apply { connectTimeout = 5000; readTimeout = 8000 }
         return conn.getInputStream().bufferedReader().use { it.readText() }
     }
 
-    suspend fun lookup(key: String, rawTitle: String, tv: Boolean): Detail? = withContext(Dispatchers.IO) {
+    /** Just the wide backdrop image for the Home banner: one cached search request. */
+    suspend fun backdropFor(key: String, rawTitle: String, tv: Boolean): String = withContext(Dispatchers.IO) {
+        val ck = "${if (tv) "tv" else "movie"}:$rawTitle"
+        backdrops[ck]?.let { return@withContext it }
+        if (ck in misses) return@withContext ""
         val (title, year) = cleanTitle(rawTitle)
-        if (title.isBlank()) return@withContext null
+        if (title.isBlank()) return@withContext ""
+        val type = if (tv) "tv" else "movie"
+        val yearParam = if (year == null) "" else if (tv) "&first_air_date_year=$year" else "&year=$year"
+        val path = runCatching {
+            JSONObject(get("https://api.themoviedb.org/3/search/$type?api_key=$key&query=${URLEncoder.encode(title, "UTF-8")}$yearParam"))
+                .optJSONArray("results")?.optJSONObject(0)?.optString("backdrop_path").orEmpty()
+        }.getOrDefault("")
+        if (path.isBlank() || path == "null") { misses += ck; "" }
+        else "https://image.tmdb.org/t/p/w1280$path".also { backdrops[ck] = it }
+    }
+
+    suspend fun lookup(key: String, rawTitle: String, tv: Boolean): Detail? = withContext(Dispatchers.IO) {
+        val ck = "${if (tv) "tv" else "movie"}:$rawTitle"
+        details[ck]?.let { return@withContext it }
+        if (ck in misses) return@withContext null
+        val found = fetchDetail(key, rawTitle, tv)
+        if (found != null) details[ck] = found else misses += ck
+        found
+    }
+
+    private fun fetchDetail(key: String, rawTitle: String, tv: Boolean): Detail? {
+        val (title, year) = cleanTitle(rawTitle)
+        if (title.isBlank()) return null
         val type = if (tv) "tv" else "movie"
         val yearParam = if (year == null) "" else if (tv) "&first_air_date_year=$year" else "&year=$year"
         val q = URLEncoder.encode(title, "UTF-8")
         val results = JSONObject(get("https://api.themoviedb.org/3/search/$type?api_key=$key&query=$q$yearParam"))
-            .optJSONArray("results") ?: return@withContext null
-        val id = results.optJSONObject(0)?.optInt("id", 0) ?: return@withContext null
-        if (id == 0) return@withContext null
+            .optJSONArray("results") ?: return null
+        val id = results.optJSONObject(0)?.optInt("id", 0) ?: return null
+        if (id == 0) return null
         val d = JSONObject(get("https://api.themoviedb.org/3/$type/$id?api_key=$key&append_to_response=credits,videos"))
 
         val cast = d.optJSONObject("credits")?.optJSONArray("cast")?.let { a ->
@@ -58,7 +88,7 @@ object Tmdb {
             if (minutes > 0) "${minutes / 60}h %02dm".format(minutes % 60).removePrefix("0h ") else null,
         ).joinToString("  ·  ")
         fun img(path: String, size: String) = if (path.isBlank() || path == "null") "" else "https://image.tmdb.org/t/p/$size$path"
-        Detail(
+        return Detail(
             plot = d.optString("overview"),
             meta = meta,
             poster = img(d.optString("poster_path"), "w500"),
