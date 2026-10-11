@@ -40,6 +40,7 @@ private fun SettingRow(label: String, desc: String, content: @Composable RowScop
 @Composable
 fun AppearanceScreen(
     accent: Int, bg: Int, cards: Int, text: Int, anim: Int, start: Int, ui: Int, onUi: (Int) -> Unit,
+    onTheme: (Int, Int) -> Unit, railLabels: Boolean, onRail: (Boolean) -> Unit,
     onAccent: (Int) -> Unit, onBg: (Int) -> Unit, onCards: (Int) -> Unit,
     onText: (Int) -> Unit, onAnim: (Int) -> Unit, onStart: (Int) -> Unit,
     onClose: () -> Unit,
@@ -58,6 +59,15 @@ fun AppearanceScreen(
             ActionButton("Done", onClick = onClose)
         }
         Spacer(Modifier.height(14.dp))
+        SettingRow("Theme", "One tap sets the accent color and background together") {
+            THEME_NAMES.forEachIndexed { i, n ->
+                Chip(n, accent == THEME_PICKS[i].first && bg == THEME_PICKS[i].second) { onTheme(THEME_PICKS[i].first, THEME_PICKS[i].second) }
+            }
+        }
+        SettingRow("Side menu", "Icons only gives the content more room") {
+            Chip("Icons + labels", railLabels) { onRail(true) }
+            Chip("Icons only", !railLabels) { onRail(false) }
+        }
         SettingRow("Accent color", "Buttons, focus highlights and progress bars") {
             ACCENTS.forEachIndexed { i, (a, b) ->
                 FocusCard(

@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -75,6 +76,7 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("playlist_url")?.let { store.setUrl(it) }
         intent.getStringExtra("tmdb_key")?.let { store.setGString("tmdbKey", it) }
         applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0), store.int("ui", 1))
+        Dimens.railLabels = store.flag("railLabels", true)
         pendingLaunch.value = intent.getStringExtra("play_entry")
         setContent { IptvTheme { App() } }
     }
@@ -246,6 +248,11 @@ private fun App() {
     var kidsCats by remember { mutableStateOf(store.list("kidsCats").toSet()) }
     var pickerKids by remember { mutableStateOf(false) }
     var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
+    var zapStrip by remember { mutableStateOf(store.flag("zapStrip", false)) }
+    var stripIdx by remember { mutableStateOf<Int?>(null) }
+    var stripTick by remember { mutableIntStateOf(0) }
+    var homeFilter by remember { mutableIntStateOf(0) }
+    var heroBackdrop by remember { mutableStateOf("") }
     var mergeDupes by remember { mutableStateOf(store.flag("mergeDupes", true)) }
     var recOpen by remember { mutableStateOf(false) }
     var recFile by remember { mutableStateOf<java.io.File?>(null) }
@@ -883,6 +890,7 @@ private fun App() {
         matchFps = store.flag("matchFps", true); liveTs = store.flag("liveTs", false)
         bufferMode = store.int("buffer", 1); resizeIdx = store.int("resize", 0).coerceIn(0, RESIZES.lastIndex)
         subSize = store.int("subSize", 1); sortMode = store.int("sortMode", 0)
+        Dimens.railLabels = store.flag("railLabels", true); zapStrip = store.flag("zapStrip", false); mergeDupes = store.flag("mergeDupes", true)
         applyNow()
         switchProfile(activeProfile)
         toast("Settings restored")
@@ -1206,6 +1214,8 @@ private fun App() {
         store.setString("picked", "1"); pickerOpen = false; listVersion++
         if (pickerKids) { pickerKids = false; homeShelves = emptyList(); provider?.let { loadHome(it) } }
     }
+    BackHandler(enabled = stripIdx != null) { stripIdx = null }
+    LaunchedEffect(stripIdx, stripTick) { if (stripIdx != null) { delay(6000); stripIdx = null } }
     BackHandler(enabled = multiOpen) { multiOpen = false; listVersion++ }
     BackHandler(enabled = appearanceOpen) { appearanceOpen = false; listVersion++ }
 
@@ -1487,6 +1497,9 @@ private fun App() {
                     kidsLimit = steps[(steps.indexOf(kidsLimit).coerceAtLeast(0) + 1) % steps.size]
                     store.setInt("kidsLimit", kidsLimit)
                 })
+                add(MenuItem("Up/Down in player: ${if (zapStrip) "channel strip" else "switch channel"}", close = false) {
+                    zapStrip = !zapStrip; store.setFlag("zapStrip", zapStrip)
+                })
                 add(MenuItem("Merge duplicate channels (HD/4K/backup): ${if (mergeDupes) "on" else "off"}", close = false) {
                     mergeDupes = !mergeDupes; store.setFlag("mergeDupes", mergeDupes)
                 })
@@ -1650,6 +1663,19 @@ private fun App() {
             .onPreviewKeyEvent { ev ->
                 if (!fullscreen || ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 infoTick++
+                val stripList = guideChannels
+                stripIdx?.let { si ->
+                    when (ev.key) {
+                        Key.DirectionUp, Key.ChannelUp -> { stripIdx = (si - 1).mod(stripList.size.coerceAtLeast(1)); stripTick++; return@onPreviewKeyEvent true }
+                        Key.DirectionDown, Key.ChannelDown -> { stripIdx = (si + 1).mod(stripList.size.coerceAtLeast(1)); stripTick++; return@onPreviewKeyEvent true }
+                        Key.DirectionCenter, Key.Enter -> {
+                            stripList.getOrNull(si)?.let { current = it }
+                            stripIdx = null
+                            return@onPreviewKeyEvent true
+                        }
+                        else -> {}
+                    }
+                }
                 if (panelOpen) {
                     return@onPreviewKeyEvent when (ev.key) {
                         Key.DirectionRight -> { if (panelMode == 1) panelMode = 0 else panelOpen = false; true }
@@ -1667,8 +1693,20 @@ private fun App() {
                     return@onPreviewKeyEvent true
                 }
                 when (ev.key) {
-                    Key.DirectionUp, Key.ChannelUp -> if (isLive) { step(-1); true } else false
-                    Key.DirectionDown, Key.ChannelDown -> if (isLive) { step(1); true } else false
+                    Key.DirectionUp, Key.ChannelUp -> if (isLive) {
+                        if (zapStrip && stripList.isNotEmpty()) {
+                            val at = stripList.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
+                            stripIdx = (at - 1).mod(stripList.size); stripTick++
+                        } else step(-1)
+                        true
+                    } else false
+                    Key.DirectionDown, Key.ChannelDown -> if (isLive) {
+                        if (zapStrip && stripList.isNotEmpty()) {
+                            val at = stripList.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
+                            stripIdx = (at + 1).mod(stripList.size); stripTick++
+                        } else step(1)
+                        true
+                    } else false
                     Key.DirectionLeft -> if (isLive) { openPanel(); true } else {
                         player.seekTo((player.currentPosition - 10_000).coerceAtLeast(0)); true
                     }
@@ -1757,6 +1795,9 @@ private fun App() {
             AppearanceScreen(
                 accentIdx, bgIdx, cardIdx, textIdx, animIdx, startIdx, uiIdx,
                 onUi = { uiIdx = it; store.setInt("ui", it); applyNow() },
+                onTheme = { a, b -> accentIdx = a; bgIdx = b; store.setInt("accent", a); store.setInt("bg", b); applyNow() },
+                railLabels = Dimens.railLabels,
+                onRail = { Dimens.railLabels = it; store.setFlag("railLabels", it) },
                 onAccent = { accentIdx = it; store.setInt("accent", it); applyNow() },
                 onBg = { bgIdx = it; store.setInt("bg", it); applyNow() },
                 onCards = { cardIdx = it; store.setInt("cards", it); applyNow() },
@@ -1779,9 +1820,13 @@ private fun App() {
                 playbackError?.let {
                     Text(it, Modifier.align(Alignment.Center), color = Palette.live)
                 }
+                stripIdx?.let { si ->
+                    ChannelStrip(guideChannels, si, ::nameOf, { c -> guide?.cache?.get(c.id).orEmpty() }, now)
+                    LaunchedEffect(guideChannels.getOrNull(si)?.id) { guideChannels.getOrNull(si)?.let { guide?.load(it) } }
+                }
                 FullscreenOverlay(
-                    showInfo, e, titleFor(e), isLive, isFav(e), epg, now, position, duration,
-                    if (isLive) "Up/Down: channel  ·  Left: channel list  ·  ⏪ ⏩ rewind / live  ·  Menu: options"
+                    showInfo && stripIdx == null, e, titleFor(e), isLive, isFav(e), epg, now, position, duration,
+                    if (isLive) (if (zapStrip) "Up/Down: browse channels" else "Up/Down: channel") + "  ·  Left: channel list  ·  ⏪ ⏩ rewind / live  ·  Menu: options"
                     else "Left/Right: seek 10s  ·  OK: pause  ·  Menu: options",
                     catchUp = isCatchUp, badge = streamBadge(player), behindLiveSec = behindLive, sleepLeftMin = sleepLeft,
                 )
@@ -1841,7 +1886,7 @@ private fun App() {
                         RailItem(RailIconType.GUIDE, "Guide", false),
                         RailItem(RailIconType.SETTINGS, "Settings", false),
                     ).filter { !kidsMode || it.icon != RailIconType.SEARCH },
-                    modifier = Modifier.width(if (isTv) 84.dp else 66.dp),
+                    modifier = Modifier.width(if (!Dimens.railLabels) 64.dp else if (isTv) 84.dp else 66.dp),
                 ) { icon ->
                     when (icon) {
                         RailIconType.HOME -> openTab(Tab.HOME)
@@ -1869,6 +1914,24 @@ private fun App() {
                                 if (mine.isNotEmpty()) add(Triple("My list", mine, false))
                                 homeShelves.forEach { add(Triple(it.title, it.items.filter { e -> visible(e) }, false)) }
                             }
+                            LaunchedEffect(hero?.key(), tmdbKey) {
+                                heroBackdrop = ""
+                                val h = hero ?: return@LaunchedEffect
+                                if (tmdbKey.isNotBlank() && h.kind != Kind.LIVE) {
+                                    heroBackdrop = runCatching { Tmdb.lookup(tmdbKey, h.title, h.kind == Kind.SERIES)?.backdrop }.getOrNull().orEmpty()
+                                }
+                            }
+                            val shownShelves = shelves.map { (t, list, w) ->
+                                Triple(t, list.filter { e ->
+                                    when (homeFilter) {
+                                        1 -> e.kind == Kind.MOVIE
+                                        2 -> e.kind == Kind.SERIES || e.kind == Kind.EPISODE
+                                        3 -> e.kind == Kind.LIVE
+                                        4 -> e.title.contains("4k", ignoreCase = true)
+                                        else -> true
+                                    }
+                                }, w)
+                            }.filter { it.second.isNotEmpty() }
                             LazyColumn(Modifier.fillMaxSize(), state = homeState, contentPadding = PaddingValues(bottom = 40.dp)) {
                                 if (hero != null) item {
                                     HeroBanner(
@@ -1878,9 +1941,20 @@ private fun App() {
                                         playFocus = Modifier.focusRequester(firstItem),
                                         onPlay = { if (hero.kind == Kind.SERIES) onEntry(hero) else playNow(hero, true) },
                                         onDetails = { onEntry(hero) },
+                                        backdrop = heroBackdrop,
                                     )
                                 }
-                                itemsIndexed(shelves) { i, (title, items, wide) ->
+                                item {
+                                    androidx.compose.foundation.lazy.LazyRow(
+                                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        itemsIndexed(listOf("All", "Movies", "Series", "Live", "4K")) { i, label ->
+                                            Chip(label, homeFilter == i) { homeFilter = i }
+                                        }
+                                    }
+                                }
+                                itemsIndexed(shownShelves) { i, (title, items, wide) ->
                                     ShelfRow(
                                         title, items, wide, ::titleFor, ::subFor, ::progressOf, ::isFav,
                                         onLongClick = { menuTarget = MenuTarget.EntryT(it) }, onOpen = ::onEntry,
@@ -1925,6 +1999,7 @@ private fun App() {
                                     modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp),
                                 )
                                 LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = liveState) {
+                                    if (busy && shownEntries.isEmpty()) items(8) { SkeletonRow() }
                                     itemsIndexed(shownEntries) { i, e ->
                                         LaunchedEffect(e.id) { guide?.load(e) }
                                         val (cur, _) = nowNext(guide?.cache?.get(e.id).orEmpty(), now)

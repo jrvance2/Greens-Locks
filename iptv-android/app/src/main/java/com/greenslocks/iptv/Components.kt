@@ -18,6 +18,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import android.graphics.Bitmap
+import android.graphics.drawable.BitmapDrawable
+import android.content.Context
+import coil.request.SuccessResult
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -60,6 +69,11 @@ fun FocusCard(
                 if (grows) Modifier.zIndex(if (focused) 1f else 0f).graphicsLayer { scaleX = scale; scaleY = scale }
                 else Modifier
             )
+            .then(
+                if (focused && level == 0 && scaleOnFocus != 1f)
+                    Modifier.shadow(16.dp, shape, clip = false, ambientColor = Palette.accent, spotColor = Palette.accent)
+                else Modifier
+            )
             // Only draw the ring while focused: a 0.dp border still paints a hairline.
             .then(if (focused) Modifier.border(borderWidth, Palette.accent, shape) else Modifier)
             .clip(shape)
@@ -75,11 +89,14 @@ fun Artwork(
     fit: ContentScale = ContentScale.Crop,
     alignment: Alignment = Alignment.Center,
 ) {
-    val brush = remember(Palette.surfaceHi, Palette.surface) { Brush.linearGradient(listOf(Palette.surfaceHi, Palette.surface)) }
-    Box(modifier.background(brush), contentAlignment = Alignment.Center) {
+    val hue = remember(title) { (kotlin.math.abs(title.hashCode()) % 360).toFloat() }
+    val brush = remember(title) {
+        Brush.linearGradient(listOf(Color.hsv(hue, 0.45f, 0.40f), Color.hsv((hue + 25f) % 360f, 0.5f, 0.22f)))
+    }
+    BoxWithConstraints(modifier.background(brush), contentAlignment = Alignment.Center) {
+        val fs = (minOf(maxWidth, maxHeight).value * 0.36f).coerceIn(13f, 44f).sp
         Text(
-            title.trim().take(1).uppercase(),
-            style = MaterialTheme.typography.headlineMedium, color = Palette.muted,
+            initialsOf(title), fontSize = fs, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.85f), maxLines = 1,
         )
         if (url.isNotBlank()) {
             val ctx = LocalContext.current
@@ -90,6 +107,41 @@ fun Artwork(
                 contentDescription = null, contentScale = fit, alignment = alignment,
                 modifier = Modifier.fillMaxSize(),
             )
+        }
+    }
+}
+
+/** "BBC One" -> "BO", "ESPN" -> "E"; shown when a channel or title has no artwork. */
+fun initialsOf(title: String): String {
+    val words = title.replace(Regex("^\\s*(?:[|\\[(][^|\\])]{1,12}[|\\])]\\s*)+"), "").split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }
+    return when {
+        words.isEmpty() -> title.trim().take(1).uppercase()
+        words.size == 1 -> words[0].take(if (words[0].length <= 4) words[0].length else 2).uppercase()
+        else -> (words[0].take(1) + words[1].take(1)).uppercase()
+    }
+}
+
+/** Average color of an image, used to tint the Home banner to match the poster. */
+suspend fun dominantColor(ctx: Context, url: String): Color? = runCatching {
+    val result = coil.Coil.imageLoader(ctx).execute(
+        ImageRequest.Builder(ctx).data(url).allowHardware(false).size(48).build()
+    )
+    val bmp = ((result as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap ?: return@runCatching null
+    val px = Bitmap.createScaledBitmap(bmp, 1, 1, true).getPixel(0, 0)
+    Color(px)
+}.getOrNull()
+
+@Composable
+fun SkeletonRow(modifier: Modifier = Modifier) {
+    val t = rememberInfiniteTransition(label = "skeleton")
+    val a by t.animateFloat(0.25f, 0.55f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "alpha")
+    Row(modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(10.dp)).background(Palette.surface).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(width = 80.dp, height = 54.dp).clip(RoundedCornerShape(6.dp)).background(Palette.surfaceHi.copy(alpha = a)))
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Box(Modifier.width(220.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(Palette.surfaceHi.copy(alpha = a)))
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.width(150.dp).height(10.dp).clip(RoundedCornerShape(4.dp)).background(Palette.surfaceHi.copy(alpha = a * 0.8f)))
         }
     }
 }
@@ -291,7 +343,7 @@ fun ChannelRow(
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Artwork(icon, title, Modifier.size(width = 68.dp, height = 46.dp).clip(RoundedCornerShape(6.dp)), ContentScale.Fit)
+            Artwork(icon, title, Modifier.size(width = 80.dp, height = 54.dp).clip(RoundedCornerShape(6.dp)), ContentScale.Fit)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

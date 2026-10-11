@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.Dp
@@ -104,7 +105,7 @@ fun GuideScreen(
             itemsIndexed(rows) { i, ch ->
                 LaunchedEffect(ch.id) { guide.load(ch) }
                 GuideRow(
-                    name = nameOf(ch),
+                    name = nameOf(ch), icon = ch.icon,
                     programmes = guide.cache[ch.id],
                     windowStart = windowStart, now = now, query = query, hs = hs,
                     firstFocus = if (i == 0) Modifier.focusRequester(first) else Modifier,
@@ -120,6 +121,7 @@ fun GuideScreen(
 @Composable
 private fun GuideRow(
     name: String,
+    icon: String,
     programmes: List<Programme>?,
     windowStart: Long,
     now: Long,
@@ -140,7 +142,11 @@ private fun GuideRow(
                         .background(if (focused) Palette.accent.copy(alpha = 0.25f) else Palette.surface)
                         .padding(horizontal = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                ) { Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge) }
+                ) {
+                    Artwork(icon, name, Modifier.size(width = 44.dp, height = 30.dp).clip(RoundedCornerShape(5.dp)), androidx.compose.ui.layout.ContentScale.Fit)
+                    Spacer(Modifier.width(8.dp))
+                    Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
         Row(Modifier.weight(1f).horizontalScroll(hs)) {
@@ -164,16 +170,20 @@ private fun GuideRow(
                                 else -> onRemind(p)
                             }
                         }) { focused ->
+                            val frac = ((now - p.start).toFloat() / (p.stop - p.start).coerceAtLeast(1)).coerceIn(0f, 1f)
+                            val cellBg: androidx.compose.ui.graphics.Brush = when {
+                                focused -> androidx.compose.ui.graphics.SolidColor(Palette.accent.copy(alpha = 0.35f))
+                                match -> androidx.compose.ui.graphics.SolidColor(Palette.accent2.copy(alpha = 0.45f))
+                                airing -> androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                    0f to Palette.accent.copy(alpha = 0.30f), frac to Palette.accent.copy(alpha = 0.30f),
+                                    frac to Palette.surfaceHi, 1f to Palette.surfaceHi,
+                                )
+                                else -> androidx.compose.ui.graphics.SolidColor(Palette.surface)
+                            }
+                            Row(Modifier.fillMaxSize().background(cellBg)) {
+                            Box(Modifier.width(4.dp).fillMaxHeight().background(genreColor(p.title)))
                             Column(
                                 Modifier.fillMaxSize()
-                                    .background(
-                                        when {
-                                            focused -> Palette.accent.copy(alpha = 0.35f)
-                                            match -> Palette.accent2.copy(alpha = 0.45f)
-                                            airing -> Palette.surfaceHi
-                                            else -> Palette.surface
-                                        }
-                                    )
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
@@ -186,6 +196,7 @@ private fun GuideRow(
                                     maxLines = 1, color = Palette.muted, style = MaterialTheme.typography.bodySmall,
                                 )
                             }
+                            }
                         }
                     }
                     cursor = e
@@ -194,4 +205,18 @@ private fun GuideRow(
             }
         }
     }
+}
+
+private val sportsRx = Regex("(?i)\\b(nfl|nba|mlb|nhl|ncaa|football|soccer|basketball|baseball|hockey|golf|tennis|ufc|boxing|racing|nascar|sport|sports|league|cup|match|game day|wrestling|f1)\\b")
+private val newsRx = Regex("(?i)\\b(news|report|weather|headlines?|today|tonight|morning|politics|business|market)\\b")
+private val kidsRx = Regex("(?i)\\b(kids?|cartoon|junior|disney|paw patrol|sesame|bluey|nick|toon|animated)\\b")
+private val movieRx = Regex("(?i)\\b(movie|film|cinema|premiere|thriller|western|romance)\\b")
+
+/** A rough genre guess from the title, shown as a thin colored bar on guide cells. */
+fun genreColor(title: String): androidx.compose.ui.graphics.Color = when {
+    sportsRx.containsMatchIn(title) -> androidx.compose.ui.graphics.Color(0xFF4ADE80)
+    newsRx.containsMatchIn(title) -> androidx.compose.ui.graphics.Color(0xFF60A5FA)
+    kidsRx.containsMatchIn(title) -> androidx.compose.ui.graphics.Color(0xFFFABE3C)
+    movieRx.containsMatchIn(title) -> androidx.compose.ui.graphics.Color(0xFFF472B6)
+    else -> androidx.compose.ui.graphics.Color.Transparent
 }

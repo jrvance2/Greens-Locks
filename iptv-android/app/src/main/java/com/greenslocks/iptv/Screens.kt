@@ -135,7 +135,7 @@ fun IconRail(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     RailIcon(item.icon, if (item.selected || focused) Palette.accent else Palette.muted)
-                    Text(
+                    if (Dimens.railLabels) Text(
                         item.label, fontSize = 10.sp, maxLines = 1,
                         color = if (item.selected || focused) Palette.text else Palette.muted,
                         modifier = Modifier.padding(top = 3.dp),
@@ -252,11 +252,30 @@ fun HeroBanner(
     playFocus: Modifier,
     onPlay: () -> Unit,
     onDetails: () -> Unit,
+    backdrop: String = "",
 ) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var tint by remember(entry.icon) { mutableStateOf<Color?>(null) }
+    LaunchedEffect(entry.icon) {
+        tint = if (entry.icon.startsWith("http") && entry.kind != Kind.LIVE) dominantColor(ctx, entry.icon) else null
+    }
+    val wash = tint ?: Palette.accent
+    val animatedWash by androidx.compose.animation.animateColorAsState(wash, label = "heroWash")
     Box(
         Modifier.fillMaxWidth().height(260.dp)
-            .background(Brush.horizontalGradient(listOf(accentWash(0.32f), accentWash(0.14f, true), Palette.bg)))
+            .background(Brush.horizontalGradient(listOf(animatedWash.copy(alpha = 0.40f), animatedWash.copy(alpha = 0.16f), Palette.bg)))
     ) {
+        if (entry.kind != Kind.LIVE) {
+            Artwork(
+                backdrop.ifBlank { entry.icon }, "", Modifier.fillMaxSize().alpha(if (backdrop.isBlank()) 0.18f else 0.5f),
+                alignment = Alignment.TopCenter,
+            )
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.horizontalGradient(listOf(Palette.bg.copy(alpha = 0.92f), Palette.bg.copy(alpha = 0.55f), Color.Transparent))
+                )
+            )
+        }
         Row(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(label.uppercase(), color = Palette.accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
@@ -416,11 +435,18 @@ fun BoxScope.FullscreenOverlay(
     behindLiveSec: Int = 0,
     sleepLeftMin: Int = 0,
 ) {
+    AnimatedVisibility(visible, Modifier.align(Alignment.TopEnd)) {
+        Text(
+            clockText(now), color = Palette.text, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(28.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.6f)).padding(horizontal = 16.dp, vertical = 6.dp),
+        )
+    }
     AnimatedVisibility(visible, Modifier.align(Alignment.BottomStart)) {
         Column(
-            Modifier.fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))))
-                .padding(horizontal = 56.dp, vertical = 32.dp)
+            Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 28.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.Black.copy(alpha = 0.78f))
+                .padding(horizontal = 28.dp, vertical = 20.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (entry.icon.isNotBlank() && isLive) {
