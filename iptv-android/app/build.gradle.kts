@@ -63,4 +63,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("com.google.zxing:core:3.5.3")
+    implementation("androidx.tvprovider:tvprovider:1.0.0")
 }

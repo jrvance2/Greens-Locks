@@ -5,6 +5,7 @@ package com.greenslocks.iptv
 import android.app.PictureInPictureParams
 import android.app.UiModeManager
 import android.os.Build
+import androidx.compose.runtime.mutableStateOf
 import android.util.Rational
 import android.content.Context
 import android.content.Intent
@@ -74,7 +75,18 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("playlist_url")?.let { store.setUrl(it) }
         intent.getStringExtra("tmdb_key")?.let { store.setGString("tmdbKey", it) }
         applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0))
+        pendingLaunch.value = intent.getStringExtra("play_entry")
         setContent { IptvTheme { App() } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        pendingLaunch.value = intent.getStringExtra("play_entry")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        WatchNext.publish(this)
     }
 
     override fun onUserLeaveHint() {
@@ -92,6 +104,8 @@ class MainActivity : ComponentActivity() {
 }
 
 /** True while a video is fullscreen, so leaving the app shrinks it to a floating window. */
+private val pendingLaunch = mutableStateOf<String?>(null)
+
 private object PipState { @Volatile var ready = false }
 
 private enum class Tab {
@@ -231,6 +245,16 @@ private fun App() {
     var kidsCats by remember { mutableStateOf(store.list("kidsCats").toSet()) }
     var pickerKids by remember { mutableStateOf(false) }
     var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
+    var mergeDupes by remember { mutableStateOf(store.flag("mergeDupes", true)) }
+    var kidsLimit by remember { mutableIntStateOf(store.int("kidsLimit", 0)) }
+    val dayKey = { java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date()) }
+    var kidsUsed by remember { mutableLongStateOf(store.long("kidsUsed_${dayKey()}")) }
+    var timesUp by remember { mutableStateOf(false) }
+    var syncServer by remember { mutableStateOf<SyncServer?>(null) }
+    var syncInfo by remember { mutableStateOf<PairInfo?>(null) }
+    var failoverTick by remember { mutableIntStateOf(0) }
+    var triedTick by remember { mutableIntStateOf(0) }
+    val triedVariants = remember { mutableSetOf<String>() }
     var tmdbKey by remember { mutableStateOf(store.gString("tmdbKey").orEmpty()) }
     var favTab by remember { mutableIntStateOf(0) }
     var sleepIdx by remember { mutableIntStateOf(0) }
@@ -304,10 +328,18 @@ private fun App() {
         ExoPlayer.Builder(ctx).setLoadControl(lc).build()
     }
     val currentNow by rememberUpdatedState(current)
+    fun variantsFor(e: Entry) = variantsOf(e, entries + allLive.orEmpty(), store.string("pref_${normName(e.title)}"))
+    val nextVariant = remember(current, entries, allLive, triedTick) {
+        current?.takeIf { it.kind == Kind.LIVE }?.let { c ->
+            variantsFor(c).firstOrNull { it.id != c.id && it.id !in triedVariants }
+        }
+    }
+    val nextVariantNow by rememberUpdatedState(nextVariant)
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                if (retries < 5) {
+                val limit = if (nextVariantNow != null) 2 else 5
+                if (retries < limit) {
                     retries++
                     val n = retries
                     scope.launch {
@@ -315,13 +347,19 @@ private fun App() {
                         if (currentNow?.kind == Kind.LIVE) player.seekToDefaultPosition()
                         player.prepare()
                     }
+                } else if (nextVariantNow != null) {
+                    failoverTick++
                 } else {
                     playbackError = "Stream failed (${error.errorCodeName})"
                 }
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_READY) { retries = 0; playbackError = null }
+                if (state == Player.STATE_READY) {
+                    retries = 0; playbackError = null
+                    val c = currentNow
+                    if (c != null && c.kind == Kind.LIVE && triedVariants.isNotEmpty()) store.setString("pref_${normName(c.title)}", c.id)
+                }
                 if (state == Player.STATE_ENDED) endedTick++
             }
 
@@ -351,6 +389,38 @@ private fun App() {
     }
 
     fun toast(msg: String) { Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show() }
+    LaunchedEffect(failoverTick) {
+        if (failoverTick == 0) return@LaunchedEffect
+        val c = current
+        val next = nextVariantNow
+        if (c != null && next != null) {
+            triedVariants += c.id; triedTick++
+            retries = 0
+            toast("That version failed. Switching to ${next.title}")
+            current = next
+        }
+    }
+    fun checkConnections() {
+        val p = provider ?: return
+        scope.launch {
+            val a = runCatching { p.account() }.getOrNull() ?: return@launch
+            if (a.maxConnections > 0 && a.activeConnections >= a.maxConnections) {
+                toast("All ${a.maxConnections} stream(s) on your plan look busy. Another device may be watching, so this could cut it off.")
+            }
+        }
+    }
+    fun kidsExtraMin() = store.long("kidsExtra_${dayKey()}")
+    fun kidsOutOfTime() = kidsMode && kidsLimit > 0 && kidsUsed >= (kidsLimit + kidsExtraMin()) * 60
+    LaunchedEffect(kidsMode, kidsLimit) {
+        while (kidsMode && kidsLimit > 0) {
+            delay(10_000)
+            if (player.isPlaying) {
+                kidsUsed += 10
+                store.setLong("kidsUsed_${dayKey()}", kidsUsed)
+                if (kidsOutOfTime()) { player.pause(); fullscreen = false; timesUp = true }
+            }
+        }
+    }
 
     // ---- naming, locks, display helpers
     fun nameOf(e: Entry) = renames[e.key()] ?: e.title
@@ -642,6 +712,7 @@ private fun App() {
         reminders = store.list("reminders")
         kidsMode = store.isKids(store.active)
         kidsCats = store.list("kidsCats").toSet()
+        kidsUsed = store.long("kidsUsed_${dayKey()}")
         unlocked = false
         player.stop()
         current = null; fullscreen = false; provider = null
@@ -692,6 +763,9 @@ private fun App() {
         listVersion++
     }
     fun playNow(e: Entry, full: Boolean) {
+        if (kidsOutOfTime()) { timesUp = true; return }
+        if (e.kind == Kind.LIVE && !player.isPlaying) checkConnections()
+        triedVariants.clear(); triedTick++
         detailEntry = null; detail = null; series = null; pausedForDetail = false
         current = e
         if (full) fullscreen = true
@@ -773,10 +847,7 @@ private fun App() {
         runCatching { val f = backupFile(); f.writeText(store.exportBackup()); toast("Saved to ${f.absolutePath}") }
             .onFailure { toast("Backup failed: ${redact(it.message)}") }
     }
-    fun restore() {
-        val f = backupFile()
-        if (!f.exists()) { toast("No backup found at ${f.absolutePath}"); return }
-        if (!store.importBackup(f.readText())) { toast("That file isn't a Vance TV backup"); return }
+    fun afterImport() {
         accentIdx = store.int("accent", 0); bgIdx = store.int("bg", 0); cardIdx = store.int("cards", 1)
         textIdx = store.int("text", 1); animIdx = store.int("anim", 0); startIdx = store.int("start", 1)
         sortAz = store.flag("sortAz", false); showHidden = store.flag("showHidden", false)
@@ -787,6 +858,39 @@ private fun App() {
         applyNow()
         switchProfile(activeProfile)
         toast("Settings restored")
+    }
+    fun restore() {
+        val f = backupFile()
+        if (!f.exists()) { toast("No backup found at ${f.absolutePath}"); return }
+        if (!store.importBackup(f.readText())) { toast("That file isn't a Vance TV backup"); return }
+        afterImport()
+    }
+
+    fun startSharing() {
+        syncServer?.stop()
+        val code = (1000..9999).random().toString()
+        val server = SyncServer(code) { store.exportBackup() }
+        val port = server.start()
+        if (port < 0) { toast("Couldn't open a port to share on"); return }
+        syncServer = server
+        syncInfo = PairInfo("${localIpAddress() ?: "?"}:$port", code)
+    }
+    fun stopSharing() { syncServer?.stop(); syncServer = null; syncInfo = null }
+    fun pullSync(address: String, code: String) {
+        scope.launch {
+            val a = address.trim().let { if (':' in it) it else "$it:8776" }
+            val text = fetchSync(a, code.trim())
+            if (text == null) toast("Couldn't reach that device")
+            else if (!store.importBackup(text)) toast("Wrong code, or that isn't a Vance TV backup")
+            else afterImport()
+        }
+    }
+    val launchEntry = pendingLaunch.value
+    LaunchedEffect(provider, launchEntry) {
+        if (launchEntry != null && provider != null) {
+            decodeEntry(launchEntry)?.let { playNow(it, true) }
+            pendingLaunch.value = null
+        }
     }
 
     // ---- derived lists
@@ -822,11 +926,12 @@ private fun App() {
     val searching = tab == Tab.LIVE && query.length >= 2 && !kidsMode
     val baseEntries = if (tab == Tab.FAVORITES) favoriteEntries else entries
     val shownEntries = remember(
-        baseEntries, query, hiddenEntries, showHidden, renames, sortAz, unlocked, hasPin, lockAdult, lockedCats, searching, allLive, tab, sortMode,
+        baseEntries, query, hiddenEntries, showHidden, renames, sortAz, unlocked, hasPin, lockAdult, lockedCats, searching, allLive, tab, sortMode, mergeDupes,
     ) {
         val source = if (searching) allLive.orEmpty() else baseEntries
         val filtered = source.filter { visible(it) && nameOf(it).contains(query, ignoreCase = true) }
             .let { if (searching) it.take(300) else it }
+            .let { if (tab == Tab.LIVE && mergeDupes && !searching) dedupe(it) else it }
         val vod = tab == Tab.MOVIES || tab == Tab.SERIES
         val sorted = if (!vod) filtered else when (sortMode) {
             1 -> filtered.sortedBy { nameOf(it).lowercase() }
@@ -902,7 +1007,14 @@ private fun App() {
         val e = current
         val p = provider
         epg = if (e != null && p != null && e.isLiveNow) {
-            runCatching { p.epg(e, 3) }.getOrDefault(emptyList())
+            var r = runCatching { p.epg(e, 3) }.getOrDefault(emptyList())
+            if (r.isEmpty()) {
+                for (v in variantsFor(e).filter { it.id != e.id }.take(3)) {
+                    r = runCatching { p.epg(v, 3) }.getOrDefault(emptyList())
+                    if (r.isNotEmpty()) break
+                }
+            }
+            r
         } else emptyList()
     }
     LaunchedEffect(current, fullscreen, infoTick) {
@@ -1152,6 +1264,22 @@ private fun App() {
         }
     }
 
+    if (timesUp) {
+        ActionMenuDialog("Screen time is up for today", listOf(
+            MenuItem("Parent PIN: add 30 minutes") {
+                requirePin("Parent PIN") { store.setLong("kidsExtra_${dayKey()}", kidsExtraMin() + 30); timesUp = false }
+            },
+            MenuItem("OK") {},
+        )) { timesUp = false }
+    }
+    syncInfo?.let { info ->
+        ActionMenuDialog("Share settings", listOf(
+            MenuItem("On the other device choose \"Get settings from another device\" and enter:", enabled = false) {},
+            MenuItem("Address   ${info.url}", enabled = false) {},
+            MenuItem("Code   ${info.code}", enabled = false) {},
+            MenuItem("Stop sharing") { stopSharing() },
+        )) { stopSharing() }
+    }
     dueReminder?.let { r ->
         ActionMenuDialog("Starting now: ${r.title}", listOf(
             MenuItem("Watch on ${nameOf(r.channel)}") { guideOpen = false; playNow(r.channel, true) },
@@ -1276,6 +1404,20 @@ private fun App() {
                     }
                 })
                 if (kidsMode) add(MenuItem("Kids: choose allowed categories…") { pickerKids = true; pickerTab = 0; pickerOpen = true })
+                add(MenuItem("Kids daily limit: ${if (kidsLimit == 0) "off" else "$kidsLimit min"}", close = false) {
+                    val steps = listOf(0, 30, 60, 90, 120, 180)
+                    kidsLimit = steps[(steps.indexOf(kidsLimit).coerceAtLeast(0) + 1) % steps.size]
+                    store.setInt("kidsLimit", kidsLimit)
+                })
+                add(MenuItem("Merge duplicate channels (HD/4K/backup): ${if (mergeDupes) "on" else "off"}", close = false) {
+                    mergeDupes = !mergeDupes; store.setFlag("mergeDupes", mergeDupes)
+                })
+                add(MenuItem("Share settings with another device…") { startSharing() })
+                add(MenuItem("Get settings from another device…") {
+                    textPrompt = TextPrompt("Address shown on the other device", "") { addr ->
+                        textPrompt = TextPrompt("Code shown on the other device", "") { code -> pullSync(addr, code) }
+                    }
+                })
                 add(MenuItem("Reminders (${reminders.size})…") { remindersOpen = true })
                 add(MenuItem("Guide time: ${if (epgShift >= 0) "+" else ""}$epgShift h  (select = +1 h)", close = false) {
                     epgShift = if (epgShift >= 12) -12 else epgShift + 1; store.setInt("epgShift", epgShift)
