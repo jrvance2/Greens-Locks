@@ -3,6 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// CI passes -Pvc=<run number> so every published build is newer than the last (needed for in-app updates).
+val buildNumber = (project.findProperty("vc") as String?)?.toIntOrNull() ?: 2
+
 android {
     namespace = "com.greenslocks.iptv"
     compileSdk = 34
@@ -11,8 +14,8 @@ android {
         applicationId = "com.greenslocks.iptv"
         minSdk = 23
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = buildNumber
+        versionName = "1.2.$buildNumber"
     }
 
     // CI supplies a stable signing key (so updates install over the old app); without one the
@@ -44,7 +47,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 }
 
@@ -59,4 +62,5 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("com.google.zxing:core:3.5.3")
 }

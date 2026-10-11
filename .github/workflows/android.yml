@@ -3,6 +3,8 @@ on:
   push:
     paths: ['iptv-android/**', '.github/workflows/android.yml']
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,11 +28,21 @@ jobs:
           else
             echo "No signing secret set: using a temporary key (uninstall the old app before installing)"
           fi
-      - run: gradle assembleRelease --no-daemon
+      - run: gradle assembleRelease --no-daemon -Pvc=${{ github.run_number }}
         env:
           VANCETV_STORE_PASSWORD: ${{ secrets.VANCETV_STORE_PASSWORD }}
           VANCETV_KEY_ALIAS: ${{ secrets.VANCETV_KEY_ALIAS }}
           VANCETV_KEY_PASSWORD: ${{ secrets.VANCETV_KEY_PASSWORD }}
+      - name: Publish release for in-app updates (stable-signed builds only)
+        if: env.VANCETV_KEYSTORE != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk VanceTV.apk
+          gh release create "build-${{ github.run_number }}" VanceTV.apk \
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+            --title "Vance TV build ${{ github.run_number }}" \
+            --notes "Automated build of ${{ github.sha }}" --latest
       - uses: actions/upload-artifact@v4
         with:
           name: vancetv-apk

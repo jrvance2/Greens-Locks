@@ -43,7 +43,7 @@ class GuideData(private val provider: Provider) {
         if (cache.containsKey(e.id)) return
         gate.withPermit {
             if (cache.containsKey(e.id)) return@withPermit
-            cache[e.id] = runCatching { provider.epg(e, 10) }.getOrDefault(emptyList())
+            cache[e.id] = runCatching { provider.guideEpg(e, 3 * 60 * 60_000L, 9 * 60 * 60_000L) }.getOrDefault(emptyList())
         }
     }
 }
@@ -55,11 +55,18 @@ fun GuideScreen(
     guide: GuideData,
     now: Long,
     onPlay: (Entry) -> Unit,
+    onCatchUp: (Entry, Programme) -> Unit,
     onClose: () -> Unit,
 ) {
     val hs = rememberScrollState()
     var query by remember { mutableStateOf("") }
-    val windowStart = remember { now - now % HALF_HOUR }
+    // Start two hours back so recent programmes (catch-up) are visible, then scroll to just before now.
+    val windowStart = remember { val t = now - 2 * 60 * 60_000L; t - t % HALF_HOUR }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    LaunchedEffect(Unit) {
+        delay(350)
+        hs.scrollTo(with(density) { msToDp((now - windowStart - HALF_HOUR).coerceAtLeast(0)).toPx().toInt() })
+    }
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(300); runCatching { first.requestFocus() } }
     // Searching programme titles needs the guide for (up to) every channel in the list.
@@ -99,6 +106,7 @@ fun GuideScreen(
                     programmes = guide.cache[ch.id],
                     windowStart = windowStart, now = now, query = query, hs = hs,
                     firstFocus = if (i == 0) Modifier.focusRequester(first) else Modifier,
+                    onCatchUp = { p -> onCatchUp(ch, p) },
                 ) { onPlay(ch) }
             }
         }
@@ -114,6 +122,7 @@ private fun GuideRow(
     query: String,
     hs: ScrollState,
     firstFocus: Modifier,
+    onCatchUp: (Programme) -> Unit,
     onPlay: () -> Unit,
 ) {
     val end = windowStart + WINDOW
@@ -140,11 +149,37 @@ private fun GuideRow(
                     if (s > cursor) Spacer(Modifier.width(msToDp(s - cursor)))
                     val match = query.length >= 2 && p.title.contains(query, ignoreCase = true)
                     Box(Modifier.width(maxOf(msToDp(e - s), 48.dp)).height(56.dp).padding(end = 2.dp)) {
-                        ListRow(
-                            p.title, "${hhmm(p.start)} – ${hhmm(p.stop)}",
-                            selected = match || (p.start <= now && now < p.stop),
-                            modifier = Modifier.fillMaxSize(),
-                        ) { if (p.start <= now) onPlay() }
+                        val airing = p.start <= now && now < p.stop
+                        val past = p.stop <= now
+                        FocusCard(Modifier.fillMaxSize(), RoundedCornerShape(6.dp), 1.0f, 2.dp, onClick = {
+                            when {
+                                past -> onCatchUp(p)
+                                airing -> onPlay()
+                            }
+                        }) { focused ->
+                            Column(
+                                Modifier.fillMaxSize()
+                                    .background(
+                                        when {
+                                            focused -> Palette.accent.copy(alpha = 0.35f)
+                                            match -> Palette.accent2.copy(alpha = 0.45f)
+                                            airing -> Palette.surfaceHi
+                                            else -> Palette.surface
+                                        }
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    p.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = if (past) Palette.muted else Palette.text,
+                                )
+                                Text(
+                                    "${hhmm(p.start)} – ${hhmm(p.stop)}" + if (past && p.archive) "  ↺" else "",
+                                    maxLines = 1, color = Palette.muted, style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
                     }
                     cursor = e
                 }

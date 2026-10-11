@@ -4,6 +4,8 @@ package com.greenslocks.iptv
 
 import android.app.UiModeManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -38,8 +40,11 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.VideoSize
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
@@ -47,8 +52,14 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.Date
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -87,6 +98,10 @@ private val RESIZES = listOf(
     AspectRatioFrameLayout.RESIZE_MODE_FILL to "Stretch",
 )
 private val BUFFERS = listOf("Low", "Normal", "High")
+private val SORT_NAMES = listOf("Default", "A–Z", "Newest", "Top rated")
+private val SUB_NAMES = listOf("Small", "Medium", "Large")
+private val SUB_SCALES = listOf(0.8f, 1f, 1.35f)
+private val SLEEP_STEPS = listOf(0, 15, 30, 60, 90)
 private val DIGITS = listOf(Key.Zero, Key.One, Key.Two, Key.Three, Key.Four, Key.Five, Key.Six, Key.Seven, Key.Eight, Key.Nine)
 private val PAD_DIGITS = listOf(
     Key.NumPad0, Key.NumPad1, Key.NumPad2, Key.NumPad3, Key.NumPad4,
@@ -100,13 +115,24 @@ private fun posKey(e: Entry) = "pos_${e.kind}_${e.id}"
 private fun durKey(e: Entry) = "dur_${e.kind}_${e.id}"
 
 @Composable
-private fun PlayerSurface(player: ExoPlayer, showController: Boolean, resizeMode: Int, modifier: Modifier) {
+private fun PlayerSurface(
+    player: ExoPlayer, showController: Boolean, resizeMode: Int, modifier: Modifier, subScale: Float = 1f,
+) {
     AndroidView(
         factory = { PlayerView(it) },
         update = {
             if (it.player !== player) it.player = player
             it.useController = showController
             it.resizeMode = resizeMode
+            it.subtitleView?.apply {
+                setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * subScale)
+                setStyle(
+                    CaptionStyleCompat(
+                        android.graphics.Color.WHITE, 0x99000000.toInt(), android.graphics.Color.TRANSPARENT,
+                        CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null,
+                    )
+                )
+            }
         },
         modifier = modifier,
     )
@@ -169,6 +195,29 @@ private fun App() {
     var panelMode by remember { mutableIntStateOf(0) }
     var panelCat by remember { mutableStateOf<Category?>(null) }
     var panelChannels by remember { mutableStateOf(emptyList<Entry>()) }
+    var autoNext by remember { mutableStateOf(store.flag("autoNext", true)) }
+    var matchFps by remember { mutableStateOf(store.flag("matchFps", true)) }
+    var subSize by remember { mutableIntStateOf(store.int("subSize", 1)) }
+    var liveTs by remember { mutableStateOf(store.flag("liveTs", false)) }
+    var sortMode by remember { mutableIntStateOf(store.int("sortMode", 0)) }
+    var myList by remember { mutableStateOf(store.list("mylist")) }
+    var favTab by remember { mutableIntStateOf(0) }
+    var sleepIdx by remember { mutableIntStateOf(0) }
+    var sleepAt by remember { mutableLongStateOf(0L) }
+    var nextUp by remember { mutableStateOf<Entry?>(null) }
+    var nextUpSecs by remember { mutableIntStateOf(0) }
+    var nextUpGo by remember { mutableStateOf(false) }
+    var endedTick by remember { mutableIntStateOf(0) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf(emptyMap<Kind, List<Entry>>()) }
+    var indexStatus by remember { mutableStateOf<String?>(null) }
+    var accountOpen by remember { mutableStateOf(false) }
+    var account by remember { mutableStateOf<AccountInfo?>(null) }
+    var updateState by remember { mutableStateOf<UpdateState>(UpdateState.Idle) }
+    var updateOpen by remember { mutableStateOf(false) }
+    var pairInfo by remember { mutableStateOf<PairInfo?>(null) }
+    val index = remember(activeProfile) { SearchIndex(ctx, activeProfile) }
 
     // ---- playback state
     var current by remember { mutableStateOf<Entry?>(null) }
@@ -242,7 +291,10 @@ private fun App() {
 
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_READY) { retries = 0; playbackError = null }
+                if (state == Player.STATE_ENDED) endedTick++
             }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) { tracksTick++ }
 
             override fun onTracksChanged(tracks: Tracks) { tracksTick++ }
         }
@@ -250,6 +302,8 @@ private fun App() {
         onDispose { player.removeListener(listener); player.release() }
     }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
+
+    fun toast(msg: String) { Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show() }
 
     // ---- naming, locks, display helpers
     fun nameOf(e: Entry) = renames[e.key()] ?: e.title
@@ -315,6 +369,12 @@ private fun App() {
     fun toggleHiddenCat(k: String) {
         hiddenCats = if (k in hiddenCats) hiddenCats - k else hiddenCats + k
         store.setList("hidCats", hiddenCats.toList())
+    }
+    val myKeys = remember(myList) { myList.mapNotNull(::decodeEntry).map { it.key() }.toSet() }
+    fun toggleMyList(e: Entry) {
+        val k = e.key()
+        myList = if (k in myKeys) myList.filter { decodeEntry(it)?.key() != k } else myList + e.encode()
+        store.setList("mylist", myList)
     }
     fun togglePinnedCat(k: String) {
         pinnedCats = if (k in pinnedCats) pinnedCats - k else pinnedCats + k
@@ -388,6 +448,7 @@ private fun App() {
     fun loadHome(p: Provider) {
         if (!p.supportsVod) return
         scope.launch {
+            val loaded = mutableListOf<Entry>()
             runCatching {
                 for ((kind, label, t, count) in listOf(
                     Quad(Kind.MOVIE, "Movies", Tab.MOVIES, 4), Quad(Kind.SERIES, "Series", Tab.SERIES, 3),
@@ -396,10 +457,29 @@ private fun App() {
                     val cats = orderedCats(t).filter { !catLocked(kind, it) && !isAdult(it.name) }.take(count)
                     for (c in cats) {
                         val items = p.entries(kind, c).take(30)
+                        loaded += items
                         if (items.isNotEmpty()) homeShelves = homeShelves + Shelf("$label · ${catName(kind, c)}", items)
                     }
                 }
             }
+            val newest = loaded.filter { it.added > 0 }.sortedByDescending { it.added }.take(30)
+            if (newest.isNotEmpty()) homeShelves = listOf(Shelf("Recently added", newest)) + homeShelves
+        }
+    }
+
+    fun rebuildIndex(p: Provider, force: Boolean) {
+        scope.launch {
+            val stale = System.currentTimeMillis() - (store.string("indexedAt")?.toLongOrNull() ?: 0L) > 12 * 3_600_000L
+            val needs = withContext(Dispatchers.IO) { force || stale || index.count() == 0 }
+            if (!needs) return@launch
+            indexStatus = "Indexing library…"
+            runCatching {
+                index.rebuild(p, if (p.supportsVod) listOf(Kind.LIVE, Kind.MOVIE, Kind.SERIES) else listOf(Kind.LIVE)) { n ->
+                    indexStatus = "Indexing library… $n items"
+                }
+                store.setString("indexedAt", System.currentTimeMillis().toString())
+            }
+            indexStatus = null
         }
     }
 
@@ -428,6 +508,7 @@ private fun App() {
             showSetup = false
             listVersion++
             loadHome(p)
+            rebuildIndex(p, false)
             if (current == null) {
                 current = store.string("last")?.let(::decodeEntry)?.takeIf { it.kind == Kind.LIVE }
             }
@@ -454,6 +535,7 @@ private fun App() {
         renames = store.map("renames")
         catOrder = store.map("catOrder")
         pinnedCats = store.list("pinCats").toSet()
+        myList = store.list("mylist")
         player.stop()
         current = null; fullscreen = false; provider = null
         resetBrowsing()
@@ -536,6 +618,69 @@ private fun App() {
         scope.launch { panelChannels = runCatching { p.entries(Kind.LIVE, c) }.getOrDefault(emptyList()) }
     }
 
+    fun catchUpEntry(ch: Entry, p: Programme) = ch.copy(
+        title = "${nameOf(ch)} · ${p.title}", start = p.start, durMin = ((p.stop - p.start) / 60_000).toInt() + 2,
+    )
+    fun playCatchUp(ch: Entry, p: Programme) {
+        if (!p.archive) { toast("Catch-up isn't available for this programme"); return }
+        playNow(catchUpEntry(ch, p), true)
+    }
+    fun openTrailer(id: String?) {
+        if (id.isNullOrBlank()) return
+        val url = if (id.startsWith("http")) id else "https://www.youtube.com/watch?v=$id"
+        runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            .onFailure { toast("No app on this device can open the trailer") }
+    }
+    fun loadAccount() {
+        val p = provider ?: return
+        scope.launch { account = runCatching { p.account() }.getOrNull() }
+    }
+    fun checkUpdates(silent: Boolean) {
+        scope.launch {
+            if (!silent) updateState = UpdateState.Checking
+            val r = runCatching { Updater.latest() }.getOrNull()
+            updateState = when {
+                r == null -> if (silent) UpdateState.Idle else UpdateState.Failed("Couldn't reach GitHub")
+                r.build > BuildConfig.VERSION_CODE -> {
+                    if (silent && store.string("updSkip") != r.build.toString()) updateOpen = true
+                    UpdateState.Available(r)
+                }
+                else -> UpdateState.UpToDate
+            }
+        }
+    }
+    fun downloadUpdate(r: Release) {
+        scope.launch {
+            updateState = UpdateState.Downloading(0)
+            runCatching { Updater.download(ctx, r.url) { pct -> updateState = UpdateState.Downloading(pct) } }
+                .onSuccess { f ->
+                    updateState = UpdateState.Idle
+                    if (!Updater.install(ctx, f)) toast("Allow Vance TV to install apps, then choose Update again")
+                }
+                .onFailure { updateState = UpdateState.Failed(redact(it.message)) }
+        }
+    }
+    fun backupFile() = File(ctx.getExternalFilesDir(null), "vancetv-backup.json")
+    fun backup() {
+        runCatching { val f = backupFile(); f.writeText(store.exportBackup()); toast("Saved to ${f.absolutePath}") }
+            .onFailure { toast("Backup failed: ${redact(it.message)}") }
+    }
+    fun restore() {
+        val f = backupFile()
+        if (!f.exists()) { toast("No backup found at ${f.absolutePath}"); return }
+        if (!store.importBackup(f.readText())) { toast("That file isn't a Vance TV backup"); return }
+        accentIdx = store.int("accent", 0); bgIdx = store.int("bg", 0); cardIdx = store.int("cards", 1)
+        textIdx = store.int("text", 1); animIdx = store.int("anim", 0); startIdx = store.int("start", 1)
+        sortAz = store.flag("sortAz", false); showHidden = store.flag("showHidden", false)
+        lockAdult = store.flag("lockAdult", true); autoNext = store.flag("autoNext", true)
+        matchFps = store.flag("matchFps", true); liveTs = store.flag("liveTs", false)
+        bufferMode = store.int("buffer", 1); resizeIdx = store.int("resize", 0).coerceIn(0, RESIZES.lastIndex)
+        subSize = store.int("subSize", 1); sortMode = store.int("sortMode", 0)
+        applyNow()
+        switchProfile(activeProfile)
+        toast("Settings restored")
+    }
+
     // ---- derived lists
     val cats = remember(catCache[tab], hiddenCats, showHidden, renames, catOrder, sortAz, tab) { orderedCats(tab) }
     val kindNow = tab.kind() ?: Kind.LIVE
@@ -566,12 +711,19 @@ private fun App() {
     val searching = tab == Tab.LIVE && query.length >= 2
     val baseEntries = if (tab == Tab.FAVORITES) favoriteEntries else entries
     val shownEntries = remember(
-        baseEntries, query, hiddenEntries, showHidden, renames, sortAz, unlocked, hasPin, lockAdult, lockedCats, searching, allLive, tab,
+        baseEntries, query, hiddenEntries, showHidden, renames, sortAz, unlocked, hasPin, lockAdult, lockedCats, searching, allLive, tab, sortMode,
     ) {
         val source = if (searching) allLive.orEmpty() else baseEntries
         val filtered = source.filter { visible(it) && nameOf(it).contains(query, ignoreCase = true) }
             .let { if (searching) it.take(300) else it }
-        if (sortAz && tab.browsable() && !searching) filtered.sortedBy { nameOf(it).lowercase() } else filtered
+        val vod = tab == Tab.MOVIES || tab == Tab.SERIES
+        val sorted = if (!vod) filtered else when (sortMode) {
+            1 -> filtered.sortedBy { nameOf(it).lowercase() }
+            2 -> filtered.sortedByDescending { it.added }
+            3 -> filtered.sortedByDescending { it.rating }
+            else -> filtered
+        }
+        if (sortMode == 0 && sortAz && tab.browsable() && !searching) sorted.sortedBy { nameOf(it).lowercase() } else sorted
     }
     val guide = remember(provider) { provider?.let { GuideData(it) } }
     val guideChannels = if (tab == Tab.LIVE) shownEntries.filter { it.kind == Kind.LIVE }
@@ -604,14 +756,14 @@ private fun App() {
         val e = current ?: return@LaunchedEffect
         val p = provider ?: return@LaunchedEffect
         retries = 0; playbackError = null
-        if (e.kind == Kind.LIVE) {
+        if (e.isLiveNow) {
             store.setString("last", e.encode())
             if (liveHistory.lastOrNull()?.key() != e.key()) {
                 liveHistory += e
                 if (liveHistory.size > 10) liveHistory.removeAt(0)
             }
         }
-        pushHistory(e)
+        if (!e.isCatchUp) pushHistory(e)
         player.setMediaItem(MediaItem.fromUri(p.streamUrl(e)))
         player.prepare()
         if (e.kind != Kind.LIVE) {
@@ -635,7 +787,7 @@ private fun App() {
     LaunchedEffect(current, now / 300_000) {
         val e = current
         val p = provider
-        epg = if (e != null && p != null && e.kind == Kind.LIVE) {
+        epg = if (e != null && p != null && e.isLiveNow) {
             runCatching { p.epg(e, 3) }.getOrDefault(emptyList())
         } else emptyList()
     }
@@ -680,6 +832,61 @@ private fun App() {
             }
         }
         numBuffer = ""
+    }
+    LaunchedEffect(player, matchFps) {
+        player.setVideoChangeFrameRateStrategy(
+            if (matchFps) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
+        )
+    }
+    LaunchedEffect(provider, liveTs) { provider?.liveFormat = if (liveTs) "ts" else "m3u8" }
+    LaunchedEffect(sleepAt) {
+        if (sleepAt <= 0L) return@LaunchedEffect
+        delay((sleepAt - System.currentTimeMillis()).coerceAtLeast(0))
+        player.pause(); fullscreen = false; sleepAt = 0L; sleepIdx = 0
+        toast("Sleep timer: playback paused")
+    }
+    // Episode finished: forget the resume spot and offer the next one with a countdown.
+    LaunchedEffect(endedTick) {
+        if (endedTick == 0) return@LaunchedEffect
+        val e = current ?: return@LaunchedEffect
+        val p = provider ?: return@LaunchedEffect
+        store.remove(posKey(e))
+        if (e.kind != Kind.EPISODE || !autoNext) return@LaunchedEffect
+        val next = runCatching { p.nextEpisode(e) }.getOrNull() ?: return@LaunchedEffect
+        nextUp = next; nextUpGo = false
+        var secs = 10
+        while (secs > 0 && nextUp != null && !nextUpGo) { nextUpSecs = secs; delay(1000); secs-- }
+        if (nextUp != null) { nextUp = null; playNow(next, true) }
+    }
+    LaunchedEffect(searchOpen) {
+        if (!searchOpen) return@LaunchedEffect
+        val p = provider ?: return@LaunchedEffect
+        runCatching { listOf(Tab.LIVE, Tab.MOVIES, Tab.SERIES).forEach { ensureCategories(p, it) } }
+    }
+    LaunchedEffect(searchQuery, searchOpen) {
+        if (!searchOpen) return@LaunchedEffect
+        delay(150)
+        searchResults = withContext(Dispatchers.IO) { runCatching { index.search(searchQuery) }.getOrDefault(emptyMap()) }
+    }
+    LaunchedEffect(Unit) { delay(6000); checkUpdates(true) }
+    // Type your login on a phone: a tiny web page on the TV, shown as a QR code while the login screen is open.
+    val loginVisible = provider == null || showSetup
+    DisposableEffect(loginVisible) {
+        if (!loginVisible) return@DisposableEffect onDispose { }
+        val code = (1000..9999).random().toString()
+        val pairSrv = PairingServer(code) { data ->
+            scope.launch {
+                val url = data["url"].orEmpty().trim()
+                if (url.isNotEmpty()) { urlText = url; useUrl = true } else {
+                    server = data["server"].orEmpty().trim(); user = data["user"].orEmpty().trim()
+                    pass = data["pass"].orEmpty(); useUrl = false
+                }
+                connect()
+            }
+        }
+        val port = pairSrv.start()
+        pairInfo = if (port > 0) localIpAddress()?.let { PairInfo("http://$it:$port", code) } else null
+        onDispose { pairSrv.stop(); pairInfo = null }
     }
     LaunchedEffect(entries, tab, wantGuide) {
         if (wantGuide && tab == Tab.LIVE && entries.isNotEmpty()) { wantGuide = false; guideOpen = true }
@@ -732,13 +939,15 @@ private fun App() {
     LaunchedEffect(fullscreen) { if (fullscreen) { delay(50); runCatching { rootFocus.requestFocus() } } }
     val liveFocusIdx = shownEntries.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
 
-    val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null) || pickerOpen || appearanceOpen
+    val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null) || pickerOpen || appearanceOpen || searchOpen
     BackHandler(enabled = showSetup && provider != null) { showSetup = false }
     BackHandler(enabled = provider != null && !showSetup && tab != Tab.HOME && !overlayActive) { openTab(Tab.HOME) }
     BackHandler(enabled = detailEntry != null) { closeDetail() }
     BackHandler(enabled = fullscreen) { fullscreen = false; listVersion++ }
     BackHandler(enabled = guideOpen) { guideOpen = false; listVersion++ }
     BackHandler(enabled = panelOpen) { panelOpen = false }
+    BackHandler(enabled = nextUp != null) { nextUp = null }
+    BackHandler(enabled = searchOpen) { searchOpen = false; listVersion++ }
     BackHandler(enabled = pickerOpen) { store.setString("picked", "1"); pickerOpen = false; listVersion++ }
     BackHandler(enabled = appearanceOpen) { appearanceOpen = false; listVersion++ }
 
@@ -767,6 +976,9 @@ private fun App() {
                 val k = e.key()
                 ActionMenuDialog(nameOf(e), buildList {
                     add(MenuItem(if (k in favKeys) "Remove from favorites" else "Add to favorites") { toggleFavorite(e) })
+                    if (e.kind == Kind.MOVIE || e.kind == Kind.SERIES) {
+                        add(MenuItem(if (k in myKeys) "Remove from My list" else "Add to My list") { toggleMyList(e) })
+                    }
                     add(MenuItem("Rename…") { textPrompt = TextPrompt("Rename", nameOf(e)) { rename(k, it) } })
                     if (k in renames) add(MenuItem("Reset name") { rename(k, "") })
                     add(MenuItem(if (k in hiddenEntries) "Unhide" else "Hide") { toggleHiddenEntry(k) })
@@ -803,14 +1015,30 @@ private fun App() {
     if (showOptions) {
         @Suppress("UNUSED_EXPRESSION") tracksTick
         val e = current
+        val curProg = nowNext(epg, now).first
+        val behind = if (player.currentLiveOffset != C.TIME_UNSET) player.currentLiveOffset else 0L
         ActionMenuDialog(
             "Player options",
             buildList {
+                add(MenuItem(streamDetails(player), enabled = false) {})
                 add(MenuItem(audioLabel(player), close = false) { cycleAudio(player); tracksTick++ })
                 add(MenuItem(textLabel(player), close = false) { cycleText(player); tracksTick++ })
                 add(MenuItem("Picture: ${RESIZES[resizeIdx].second}", close = false) {
                     resizeIdx = (resizeIdx + 1) % RESIZES.size
                     store.setInt("resize", resizeIdx)
+                })
+                if (e != null && e.isLiveNow) {
+                    if (behind > 3000) add(MenuItem("Jump to live") { player.seekToDefaultPosition() })
+                    if (curProg?.archive == true) {
+                        add(MenuItem("↺ Restart “${curProg.title}” (catch-up)") { playNow(catchUpEntry(e, curProg), true) })
+                    }
+                    add(MenuItem("Stream format: ${if (liveTs) "TS" else "HLS"}  (switch if a channel won't play)", close = false) {
+                        liveTs = !liveTs; store.setFlag("liveTs", liveTs); reloadTick++
+                    })
+                }
+                add(MenuItem("Sleep timer: ${if (SLEEP_STEPS[sleepIdx] == 0) "off" else "${SLEEP_STEPS[sleepIdx]} min"}", close = false) {
+                    sleepIdx = (sleepIdx + 1) % SLEEP_STEPS.size
+                    sleepAt = if (sleepIdx == 0) 0L else System.currentTimeMillis() + SLEEP_STEPS[sleepIdx] * 60_000L
                 })
                 if (e != null) {
                     add(MenuItem(if (e.key() in favKeys) "★ Remove from favorites" else "☆ Add to favorites", close = false) { toggleFavorite(e) })
@@ -867,8 +1095,25 @@ private fun App() {
                     store.saveProfiles(profiles)
                     switchProfile(0)
                 })
+                add(MenuItem("Account & subscription…") { account = null; accountOpen = true; loadAccount() })
+                add(MenuItem("Check for updates…") { updateOpen = true; checkUpdates(false) })
                 add(MenuItem("Appearance…") { appearanceOpen = true })
                 add(MenuItem("Choose categories…") { pickerTab = 0; pickerOpen = true })
+                add(MenuItem("Match frame rate: ${if (matchFps) "on" else "off"}", close = false) {
+                    matchFps = !matchFps; store.setFlag("matchFps", matchFps)
+                })
+                add(MenuItem("Auto-play next episode: ${if (autoNext) "on" else "off"}", close = false) {
+                    autoNext = !autoNext; store.setFlag("autoNext", autoNext)
+                })
+                add(MenuItem("Subtitle size: ${SUB_NAMES[subSize]}", close = false) {
+                    subSize = (subSize + 1) % SUB_NAMES.size; store.setInt("subSize", subSize)
+                })
+                add(MenuItem("Live stream format: ${if (liveTs) "TS" else "HLS (m3u8)"}", close = false) {
+                    liveTs = !liveTs; store.setFlag("liveTs", liveTs)
+                })
+                add(MenuItem("Rebuild search index") { provider?.let { rebuildIndex(it, true) } })
+                add(MenuItem("Back up settings to a file") { backup() })
+                add(MenuItem("Restore settings from backup") { restore() })
                 add(MenuItem("Sort A–Z: ${if (sortAz) "on" else "off"}", close = false) {
                     sortAz = !sortAz; store.setFlag("sortAz", sortAz)
                 })
@@ -888,13 +1133,66 @@ private fun App() {
                     if (unlocked) add(MenuItem("Lock now") { unlocked = false })
                     add(MenuItem("Remove PIN") { requirePin("Enter PIN to remove it") { store.clearPin(); hasPin = false } })
                 }
+                add(MenuItem("Vance TV ${BuildConfig.VERSION_NAME}", enabled = false) {})
                 add(MenuItem("Close") {})
             },
         ) { showSettings = false }
     }
 
+    if (accountOpen) {
+        val a = account
+        ActionMenuDialog(
+            "Account & subscription",
+            buildList {
+                if (a == null) {
+                    add(MenuItem(if (provider?.supportsVod == true) "Loading…" else "Not available for plain playlists", enabled = false) {})
+                } else {
+                    val df = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+                    add(MenuItem("Status: ${a.status}${if (a.trial) " (trial)" else ""}", enabled = false) {})
+                    val ex = a.expires
+                    if (ex != null) {
+                        val days = ((ex - System.currentTimeMillis()) / 86_400_000L).toInt()
+                        add(MenuItem("Expires: ${df.format(Date(ex))}  (${if (days >= 0) "in $days days" else "expired"})", enabled = false) {})
+                    } else add(MenuItem("Expires: no date reported", enabled = false) {})
+                    add(MenuItem("Connections: ${a.activeConnections} of ${a.maxConnections} in use", enabled = false) {})
+                    a.created?.let { add(MenuItem("Account created: ${df.format(Date(it))}", enabled = false) {}) }
+                    if (a.timezone.isNotBlank()) add(MenuItem("Server time zone: ${a.timezone}", enabled = false) {})
+                }
+                add(MenuItem("Refresh", close = false) { account = null; loadAccount() })
+                add(MenuItem("Close") {})
+            },
+        ) { accountOpen = false }
+    }
+
+    if (updateOpen) {
+        val st = updateState
+        ActionMenuDialog(
+            "Updates",
+            buildList {
+                add(MenuItem("Installed: ${BuildConfig.VERSION_NAME}", enabled = false) {})
+                when (st) {
+                    UpdateState.Idle -> add(MenuItem("Check now", close = false) { checkUpdates(false) })
+                    UpdateState.Checking -> add(MenuItem("Checking…", enabled = false) {})
+                    UpdateState.UpToDate -> add(MenuItem("You're up to date", enabled = false) {})
+                    is UpdateState.Available -> {
+                        add(MenuItem("Update available: build ${st.release.build}", enabled = false) {})
+                        add(MenuItem("Download and install", close = false) { downloadUpdate(st.release) })
+                        add(MenuItem("Not now") { store.setString("updSkip", st.release.build.toString()) })
+                    }
+                    is UpdateState.Downloading -> add(MenuItem("Downloading…  ${st.percent}%", enabled = false) {})
+                    is UpdateState.Failed -> {
+                        add(MenuItem(st.message, enabled = false) {})
+                        add(MenuItem("Try again", close = false) { checkUpdates(false) })
+                    }
+                }
+                add(MenuItem("Close") {})
+            },
+        ) { updateOpen = false }
+    }
+
     // ---- reusable pieces of the main UI
-    val isLive = current?.kind == Kind.LIVE
+    val isLive = current?.isLiveNow == true
+    val isCatchUp = current?.isCatchUp == true
     val resizeMode = RESIZES[resizeIdx].first
 
     val previewPane: @Composable ColumnScope.() -> Unit = {
@@ -948,6 +1246,10 @@ private fun App() {
                         else -> false // Up/Down/OK go to the focused row in the panel
                     }
                 }
+                if (nextUp != null && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) {
+                    nextUpGo = true
+                    return@onPreviewKeyEvent true
+                }
                 val digit = DIGITS.indexOf(ev.key).takeIf { it >= 0 } ?: PAD_DIGITS.indexOf(ev.key)
                 if (digit >= 0 && isLive) {
                     numBuffer = (numBuffer + digit).takeLast(5)
@@ -963,6 +1265,15 @@ private fun App() {
                     Key.DirectionCenter, Key.Enter, Key.MediaPlayPause -> {
                         if (player.isPlaying) player.pause() else player.play(); true
                     }
+                    Key.MediaRewind -> {
+                        if (isLive && !player.isCurrentMediaItemSeekable) toast("This stream can't be rewound")
+                        else player.seekTo((player.currentPosition - if (isLive) 15_000 else 30_000).coerceAtLeast(0))
+                        true
+                    }
+                    Key.MediaFastForward -> {
+                        if (isLive) player.seekToDefaultPosition() else player.seekTo(player.currentPosition + 30_000)
+                        true
+                    }
                     Key.Menu -> { showOptions = true; true }
                     else -> false
                 }
@@ -972,10 +1283,20 @@ private fun App() {
         if (provider == null || showSetup) {
             LoginScreen(
                 useUrl, urlText, server, user, pass, showPass, status, busy,
-                canCancel = provider != null,
+                canCancel = provider != null, pair = pairInfo,
                 onUrl = { urlText = it }, onServer = { server = it }, onUser = { user = it }, onPass = { pass = it },
                 onTogglePass = { showPass = !showPass }, onToggleMode = { useUrl = !useUrl },
                 onConnect = ::connect, onCancel = { showSetup = false },
+            )
+        } else if (searchOpen) {
+            SearchScreen(
+                query = searchQuery, onQuery = { searchQuery = it },
+                results = searchResults.mapValues { (_, list) -> list.filter { !entryLocked(it) } },
+                status = indexStatus, nameOf = ::nameOf,
+                onOpen = { e ->
+                    searchOpen = false
+                    if (e.kind == Kind.LIVE) playNow(e, true) else onEntry(e)
+                },
             )
         } else if (pickerOpen) {
             val vod = provider?.supportsVod == true
@@ -1017,7 +1338,9 @@ private fun App() {
             )
         } else if (fullscreen && current != null) {
                 val e = current!!
-                PlayerSurface(player, false, resizeMode, Modifier.fillMaxSize().background(Color.Black))
+                val behindLive = if (isLive && player.currentLiveOffset != C.TIME_UNSET) (player.currentLiveOffset / 1000).toInt() else 0
+                val sleepLeft = if (sleepAt > 0) ((sleepAt - now) / 60_000 + 1).toInt().coerceAtLeast(1) else 0
+                PlayerSurface(player, false, resizeMode, Modifier.fillMaxSize().background(Color.Black), SUB_SCALES[subSize])
                 if (numBuffer.isNotEmpty()) {
                     Text(
                         numBuffer, Modifier.align(Alignment.TopEnd).padding(40.dp),
@@ -1029,9 +1352,11 @@ private fun App() {
                 }
                 FullscreenOverlay(
                     showInfo, e, titleFor(e), isLive, isFav(e), epg, now, position, duration,
-                    if (isLive) "Up/Down: channel  ·  Left: channel list  ·  digits: jump  ·  Menu: options"
+                    if (isLive) "Up/Down: channel  ·  Left: channel list  ·  ⏪ ⏩ rewind / live  ·  Menu: options"
                     else "Left/Right: seek 10s  ·  OK: pause  ·  Menu: options",
+                    catchUp = isCatchUp, badge = streamBadge(player), behindLiveSec = behindLive, sleepLeftMin = sleepLeft,
                 )
+                nextUp?.let { NextUpCard(it.title, nextUpSecs) }
                 ChannelPanel(
                     visible = panelOpen && isLive, mode = panelMode,
                     title = if (panelMode == 0) (panelCat?.let { catName(Kind.LIVE, it) }?.ifBlank { null } ?: "Channels") else "Categories",
@@ -1051,6 +1376,7 @@ private fun App() {
                 GuideScreen(
                     channels = guideChannels, nameOf = ::nameOf, guide = guide, now = now,
                     onPlay = { ch -> playNow(ch, true); guideOpen = false },
+                    onCatchUp = { ch, prog -> playCatchUp(ch, prog); if (prog.archive) guideOpen = false },
                     onClose = { guideOpen = false; listVersion++ },
                 )
         } else if (detailEntry != null) {
@@ -1065,6 +1391,9 @@ private fun App() {
                         onPlay = { playNow(d, true) },
                         onRestart = { store.remove(posKey(d)); playNow(d, true) },
                         onFavorite = { toggleFavorite(d) },
+                        inMyList = d.key() in myKeys,
+                        onMyList = { toggleMyList(d) },
+                        onTrailer = { openTrailer(detail?.trailer) },
                         onEpisode = { playNow(it, true) },
                     )
                 }
@@ -1073,6 +1402,7 @@ private fun App() {
                 IconRail(
                     items = listOf(
                         RailItem(RailIconType.HOME, "Home", tab == Tab.HOME),
+                        RailItem(RailIconType.SEARCH, "Search", false),
                         RailItem(RailIconType.LIVE, "Live TV", tab == Tab.LIVE),
                         RailItem(RailIconType.MOVIES, "Movies", tab == Tab.MOVIES),
                         RailItem(RailIconType.SERIES, "Series", tab == Tab.SERIES),
@@ -1081,15 +1411,17 @@ private fun App() {
                         RailItem(RailIconType.SETTINGS, "Settings", false),
                     ),
                     modifier = Modifier.width(if (isTv) 84.dp else 66.dp),
-                ) { i ->
-                    when (i) {
-                        0 -> openTab(Tab.HOME)
-                        1 -> openTab(Tab.LIVE)
-                        2 -> openTab(Tab.MOVIES)
-                        3 -> openTab(Tab.SERIES)
-                        4 -> openTab(Tab.FAVORITES)
-                        5 -> if (guideChannels.isNotEmpty()) guideOpen = true else { openTab(Tab.LIVE); wantGuide = true }
-                        else -> openSettings()
+                ) { icon ->
+                    when (icon) {
+                        RailIconType.HOME -> openTab(Tab.HOME)
+                        RailIconType.SEARCH -> { searchQuery = ""; searchResults = emptyMap(); searchOpen = true }
+                        RailIconType.LIVE -> openTab(Tab.LIVE)
+                        RailIconType.MOVIES -> openTab(Tab.MOVIES)
+                        RailIconType.SERIES -> openTab(Tab.SERIES)
+                        RailIconType.FAVORITES -> openTab(Tab.FAVORITES)
+                        RailIconType.GUIDE ->
+                            if (guideChannels.isNotEmpty()) guideOpen = true else { openTab(Tab.LIVE); wantGuide = true }
+                        RailIconType.SETTINGS -> openSettings()
                     }
                 }
                 Box(Modifier.weight(1f).fillMaxHeight()) {
@@ -1102,6 +1434,8 @@ private fun App() {
                             val shelves = buildList {
                                 if (cont.isNotEmpty()) add(Triple("Continue watching", cont, true))
                                 if (favs.isNotEmpty()) add(Triple("Favorites", favs, true))
+                                val mine = myList.mapNotNull(::decodeEntry).filter { visible(it) }.take(20)
+                                if (mine.isNotEmpty()) add(Triple("My list", mine, false))
                                 homeShelves.forEach { add(Triple(it.title, it.items.filter { e -> visible(e) }, false)) }
                             }
                             LazyColumn(Modifier.fillMaxSize(), state = homeState, contentPadding = PaddingValues(bottom = 40.dp)) {
@@ -1190,7 +1524,11 @@ private fun App() {
                                 BrowseHeader(
                                     category?.let { catName(kind, it) } ?: (if (tab == Tab.MOVIES) "Movies" else "Series"),
                                     query, { query = it },
-                                )
+                                ) {
+                                    ActionButton("Sort: ${SORT_NAMES[sortMode]}", primary = false) {
+                                        sortMode = (sortMode + 1) % SORT_NAMES.size; store.setInt("sortMode", sortMode)
+                                    }
+                                }
                                 if (provider?.supportsVod == false) {
                                     Text("Movies and series need an Xtream-style login (server, username, password).", color = Palette.muted)
                                 } else if (busy && shownEntries.isEmpty()) {
@@ -1215,8 +1553,16 @@ private fun App() {
                         }
 
                         Tab.FAVORITES -> Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                            Text("Favorites", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                            val favs = favoriteEntries.filter { visible(it) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (favTab == 0) "Favorites" else "My list", Modifier.weight(1f),
+                                    style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                                )
+                                Chip("★ Favorites", favTab == 0) { favTab = 0 }
+                                Spacer(Modifier.width(8.dp))
+                                Chip("My list", favTab == 1) { favTab = 1 }
+                            }
+                            val favs = (if (favTab == 0) favoriteEntries else myList.mapNotNull(::decodeEntry)).filter { visible(it) }
                             if (favs.isEmpty()) {
                                 Text("Hold OK on any channel, movie or series to add it here.", Modifier.padding(top = 16.dp), color = Palette.muted)
                             }

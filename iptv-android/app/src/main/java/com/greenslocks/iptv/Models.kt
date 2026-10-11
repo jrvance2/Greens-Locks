@@ -16,11 +16,31 @@ data class Entry(
     val season: Int = 0,
     /** For episodes: the series title, so history can show "Show - S1 E2". */
     val parent: String = "",
+    /** For episodes: the series id, so the next episode can be found. */
+    val series: String = "",
+    /** Catch-up playback of a past programme on a live channel (0 = the live stream). */
+    val start: Long = 0L,
+    val durMin: Int = 0,
+    val added: Long = 0L,
+    val rating: Float = 0f,
 )
 
-data class Detail(val plot: String, val meta: String, val poster: String)
+val Entry.isLiveNow: Boolean get() = kind == Kind.LIVE && start == 0L
+val Entry.isCatchUp: Boolean get() = kind == Kind.LIVE && start > 0L
 
-data class Programme(val title: String, val start: Long, val stop: Long)
+data class Detail(val plot: String, val meta: String, val poster: String, val trailer: String = "")
+
+data class Programme(val title: String, val start: Long, val stop: Long, val archive: Boolean = false)
+
+data class AccountInfo(
+    val status: String,
+    val expires: Long?,
+    val maxConnections: Int,
+    val activeConnections: Int,
+    val trial: Boolean,
+    val created: Long?,
+    val timezone: String,
+)
 
 private const val SEP = "\u0001"
 
@@ -28,7 +48,7 @@ private const val SEP = "\u0001"
 fun Entry.key(): String = "${kind.name}:$id"
 
 fun Entry.encode(): String =
-    listOf(kind.name, id, ext, title, icon, num.toString(), cat, season.toString(), parent).joinToString(SEP)
+    listOf(kind.name, id, ext, title, icon, num.toString(), cat, season.toString(), parent, series).joinToString(SEP)
 
 fun decodeEntry(s: String): Entry? {
     val p = s.split(SEP)
@@ -41,6 +61,7 @@ fun decodeEntry(s: String): Entry? {
         cat = p.getOrElse(6) { "" },
         season = p.getOrNull(7)?.toIntOrNull() ?: 0,
         parent = p.getOrElse(8) { "" },
+        series = p.getOrElse(9) { "" },
     )
 }
 

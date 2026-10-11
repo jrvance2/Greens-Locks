@@ -1,6 +1,10 @@
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.greenslocks.iptv
 
 import androidx.media3.common.C
+import androidx.media3.common.MimeTypes
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
@@ -56,4 +60,60 @@ fun cycleText(p: Player) {
         else b.clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
     }
     p.trackSelectionParameters = b.build()
+}
+
+private fun videoCodec(mime: String?): String = when (mime) {
+    MimeTypes.VIDEO_H265 -> "HEVC"
+    MimeTypes.VIDEO_H264 -> "H.264"
+    MimeTypes.VIDEO_AV1 -> "AV1"
+    MimeTypes.VIDEO_VP9 -> "VP9"
+    MimeTypes.VIDEO_MPEG2 -> "MPEG-2"
+    MimeTypes.VIDEO_DOLBY_VISION -> "Dolby Vision"
+    null -> ""
+    else -> mime.substringAfter('/').uppercase()
+}
+
+private fun audioCodec(mime: String?): String = when (mime) {
+    MimeTypes.AUDIO_AC3 -> "Dolby Digital"
+    MimeTypes.AUDIO_E_AC3 -> "Dolby Digital+"
+    MimeTypes.AUDIO_E_AC3_JOC -> "Dolby Atmos"
+    MimeTypes.AUDIO_AAC -> "AAC"
+    MimeTypes.AUDIO_DTS -> "DTS"
+    MimeTypes.AUDIO_MPEG -> "MP3"
+    null -> ""
+    else -> mime.substringAfter('/').uppercase()
+}
+
+private fun channelLabel(n: Int): String = when (n) {
+    1 -> "mono"; 2 -> "stereo"; 6 -> "5.1"; 8 -> "7.1"; else -> if (n > 0) "$n ch" else ""
+}
+
+/** Short badge for the fullscreen overlay, e.g. "4K · HEVC · 59 fps · HDR10". */
+fun streamBadge(p: Player): String {
+    val v = (p as? ExoPlayer)?.videoFormat ?: return ""
+    val res = when {
+        v.height >= 2160 -> "4K"; v.height >= 1440 -> "1440p"; v.height >= 1080 -> "1080p"
+        v.height >= 720 -> "720p"; v.height > 0 -> "${v.height}p"; else -> ""
+    }
+    val hdr = when (v.colorInfo?.colorTransfer) {
+        C.COLOR_TRANSFER_ST2084 -> "HDR10"; C.COLOR_TRANSFER_HLG -> "HLG"; else -> ""
+    }
+    val fps = if (v.frameRate > 0) "%.0f fps".format(v.frameRate) else ""
+    return listOf(res, videoCodec(v.sampleMimeType), fps, hdr).filter { it.isNotEmpty() }.joinToString(" · ")
+}
+
+/** Detailed line for the Options menu. */
+fun streamDetails(p: Player): String {
+    val e = p as? ExoPlayer ?: return "Stream: unknown"
+    val v = e.videoFormat
+    val a = e.audioFormat
+    val video = if (v == null) "no video yet" else listOfNotNull(
+        if (v.width > 0) "${v.width}×${v.height}" else null,
+        videoCodec(v.sampleMimeType).ifEmpty { null },
+        if (v.frameRate > 0) "%.1f fps".format(v.frameRate) else null,
+        if (v.bitrate > 0) "%.1f Mbps".format(v.bitrate / 1_000_000f) else null,
+        when (v.colorInfo?.colorTransfer) { C.COLOR_TRANSFER_ST2084 -> "HDR10"; C.COLOR_TRANSFER_HLG -> "HLG"; else -> null },
+    ).joinToString(" · ")
+    val audio = if (a == null) "" else "   |   Audio: " + listOf(audioCodec(a.sampleMimeType), channelLabel(a.channelCount)).filter { it.isNotEmpty() }.joinToString(" ")
+    return "Stream: $video$audio"
 }

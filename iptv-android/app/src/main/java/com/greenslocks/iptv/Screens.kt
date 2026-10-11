@@ -45,7 +45,7 @@ fun accentWash(alpha: Float, second: Boolean = false): Color =
 
 // ------------------------------------------------------------------ navigation rail
 
-enum class RailIconType { HOME, LIVE, MOVIES, SERIES, FAVORITES, GUIDE, SETTINGS }
+enum class RailIconType { HOME, SEARCH, LIVE, MOVIES, SERIES, FAVORITES, GUIDE, SETTINGS }
 
 data class RailItem(val icon: RailIconType, val label: String, val selected: Boolean)
 
@@ -62,6 +62,10 @@ fun RailIcon(type: RailIconType, color: Color, modifier: Modifier = Modifier.siz
                     lineTo(w * 0.2f, h * 0.5f); close()
                 }, color,
             )
+            RailIconType.SEARCH -> {
+                drawCircle(color, radius = w * 0.29f, center = Offset(w * 0.42f, h * 0.42f), style = Stroke(width = w * 0.12f))
+                drawLine(color, Offset(w * 0.64f, h * 0.64f), Offset(w * 0.92f, h * 0.92f), strokeWidth = w * 0.13f)
+            }
             RailIconType.LIVE -> {
                 drawCircle(color, radius = w * 0.4f, style = Stroke(width = w * 0.11f))
                 drawCircle(color, radius = w * 0.16f)
@@ -105,10 +109,10 @@ fun RailIcon(type: RailIconType, color: Color, modifier: Modifier = Modifier.siz
 fun IconRail(
     items: List<RailItem>,
     modifier: Modifier = Modifier,
-    onItem: (Int) -> Unit,
+    onItem: (RailIconType) -> Unit,
 ) {
     Column(
-        modifier.fillMaxHeight().background(Palette.surface).padding(horizontal = 8.dp, vertical = 14.dp),
+        modifier.fillMaxHeight().background(Palette.surface).padding(horizontal = 8.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -116,16 +120,16 @@ fun IconRail(
                 .background(Brush.linearGradient(listOf(Palette.accent, Palette.accent2))),
             contentAlignment = Alignment.Center,
         ) { Text("V", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp) }
-        Spacer(Modifier.height(14.dp))
-        items.forEachIndexed { i, item ->
-            FocusCard(Modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(12.dp), 1f, 2.dp, onClick = { onItem(i) }) { focused ->
+        Spacer(Modifier.height(8.dp))
+        items.forEachIndexed { _, item ->
+            FocusCard(Modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(12.dp), 1f, 2.dp, onClick = { onItem(item.icon) }) { focused ->
                 Column(
                     Modifier.fillMaxWidth()
                         .background(
                             if (focused) Palette.accent.copy(alpha = 0.3f)
                             else if (item.selected) Palette.accent.copy(alpha = 0.18f) else Color.Transparent
                         )
-                        .padding(vertical = 8.dp),
+                        .padding(vertical = 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     RailIcon(item.icon, if (item.selected || focused) Palette.accent else Palette.muted)
@@ -153,6 +157,7 @@ fun LoginScreen(
     status: String,
     busy: Boolean,
     canCancel: Boolean,
+    pair: PairInfo?,
     onUrl: (String) -> Unit,
     onServer: (String) -> Unit,
     onUser: (String) -> Unit,
@@ -168,8 +173,13 @@ fun LoginScreen(
         ),
         contentAlignment = Alignment.Center,
     ) {
+      Row(
+        Modifier.widthIn(max = if (pair != null) 900.dp else 540.dp).padding(24.dp),
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
         Column(
-            Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(24.dp)
+            Modifier.weight(1f)
                 .clip(RoundedCornerShape(20.dp)).background(Palette.surface.copy(alpha = 0.92f)).padding(28.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -211,6 +221,20 @@ fun LoginScreen(
                 ActionButton(if (useUrl) "Use username / password" else "Use playlist URL", primary = false, onClick = onToggleMode)
             }
         }
+        if (pair != null) {
+            Column(
+                Modifier.width(250.dp).clip(RoundedCornerShape(20.dp)).background(Palette.surface.copy(alpha = 0.92f)).padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("Type it on your phone", fontWeight = FontWeight.SemiBold)
+                Text("Scan, or open the address below on a phone on the same Wi-Fi.", color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+                QrCode(pair.url, 150.dp, Modifier.clip(RoundedCornerShape(8.dp)))
+                Text(pair.url.removePrefix("http://"), fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 10.dp))
+                Text("Code", color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                Text(pair.code, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Palette.accent)
+            }
+        }
+      }
     }
 }
 
@@ -269,6 +293,9 @@ fun DetailScreen(
     onPlay: () -> Unit,
     onRestart: () -> Unit,
     onFavorite: () -> Unit,
+    inMyList: Boolean,
+    onMyList: () -> Unit,
+    onTrailer: () -> Unit,
     onEpisode: (Entry) -> Unit,
 ) {
     val first = remember { FocusRequester() }
@@ -312,6 +339,8 @@ fun DetailScreen(
                         modifier = if (entry.kind == Kind.MOVIE) Modifier else Modifier.focusRequester(first),
                         onClick = onFavorite,
                     )
+                    ActionButton(if (inMyList) "✓  In My list" else "+  My list", primary = false, onClick = onMyList)
+                    if (!detail?.trailer.isNullOrBlank()) ActionButton("▶  Trailer", primary = false, onClick = onTrailer)
                 }
                 if (entry.kind == Kind.SERIES) {
                     if (seasons.size > 1) {
@@ -367,6 +396,10 @@ fun BoxScope.FullscreenOverlay(
     position: Long,
     duration: Long,
     hint: String,
+    catchUp: Boolean = false,
+    badge: String = "",
+    behindLiveSec: Int = 0,
+    sleepLeftMin: Int = 0,
 ) {
     AnimatedVisibility(visible, Modifier.align(Alignment.BottomStart)) {
         Column(
@@ -385,6 +418,12 @@ fun BoxScope.FullscreenOverlay(
                             Text(
                                 "● LIVE", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                                 modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Palette.live).padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                            Spacer(Modifier.width(12.dp))
+                        } else if (catchUp) {
+                            Text(
+                                "↺ CATCH-UP", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Palette.accent).padding(horizontal = 8.dp, vertical = 2.dp),
                             )
                             Spacer(Modifier.width(12.dp))
                         }
@@ -413,7 +452,17 @@ fun BoxScope.FullscreenOverlay(
                     Text(fmtTime(duration), color = Palette.muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
-            Text(hint, color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 10.dp))
+            if (behindLiveSec > 3) {
+                Text(
+                    "⏸  ${behindLiveSec / 60}:%02d behind live  ·  fast-forward to jump back to live".format(behindLiveSec % 60),
+                    color = Palette.accent, modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+            val extras = listOfNotNull(badge.ifEmpty { null }, if (sleepLeftMin > 0) "Sleep in $sleepLeftMin min" else null)
+            if (extras.isNotEmpty()) {
+                Text(extras.joinToString("   ·   "), color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+            }
+            Text(hint, color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
         }
     }
 }
@@ -441,5 +490,19 @@ fun BrowseHeader(
             value = query, onValueChange = onQuery, singleLine = true,
             label = { Text(searchLabel) }, modifier = Modifier.width(searchWidth),
         )
+    }
+}
+
+/** "Next episode in 8s" card shown when an episode ends. */
+@Composable
+fun BoxScope.NextUpCard(title: String, secs: Int) {
+    Column(
+        Modifier.align(Alignment.BottomEnd).padding(end = 48.dp, bottom = 200.dp).width(320.dp)
+            .clip(RoundedCornerShape(16.dp)).background(Palette.surface.copy(alpha = 0.95f)).padding(18.dp),
+    ) {
+        Text("UP NEXT", color = Palette.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+        Text("Playing in ${secs}s", color = Palette.muted, modifier = Modifier.padding(top = 6.dp))
+        Text("OK: play now   ·   Back: cancel", color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
     }
 }

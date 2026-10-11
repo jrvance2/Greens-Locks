@@ -4,6 +4,8 @@ import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import org.json.JSONArray
+import org.json.JSONObject
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.util.UUID
@@ -130,6 +132,42 @@ class Store(private val prefs: SharedPreferences) {
     fun setFlag(name: String, v: Boolean) { prefs.edit().putBoolean(name, v).apply() }
     fun int(name: String, def: Int) = prefs.getInt(name, def)
     fun setInt(name: String, v: Int) { prefs.edit().putInt(name, v).apply() }
+
+    // ---- backup / restore (favorites, hidden/pinned categories, names, layout and settings; never logins or PIN)
+    private val backupLists = listOf("fav2", "hist", "hidCats", "hidEntries", "lockCats", "pinCats", "mylist")
+    private val backupMaps = listOf("renames", "catOrder")
+    private val backupInts = listOf("accent", "bg", "cards", "text", "anim", "start", "buffer", "resize", "subSize", "sortMode")
+    private val backupFlags = listOf("sortAz", "showHidden", "lockAdult", "autoNext", "matchFps", "liveTs")
+
+    fun exportBackup(): String {
+        val root = JSONObject().put("app", "VanceTV").put("version", 1)
+        val lists = JSONObject()
+        backupLists.forEach { n -> lists.put(n, JSONArray(if (n == "fav2") favorites() else list(n))) }
+        val maps = JSONObject()
+        backupMaps.forEach { n -> maps.put(n, JSONObject(map(n))) }
+        val ints = JSONObject()
+        backupInts.forEach { n -> if (prefs.contains(n)) ints.put(n, prefs.getInt(n, 0)) }
+        val flags = JSONObject()
+        backupFlags.forEach { n -> if (prefs.contains(n)) flags.put(n, prefs.getBoolean(n, false)) }
+        return root.put("lists", lists).put("maps", maps).put("ints", ints).put("flags", flags).toString(2)
+    }
+
+    /** Returns false if the text isn't a Vance TV backup. */
+    fun importBackup(text: String): Boolean {
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return false
+        if (root.optString("app") != "VanceTV") return false
+        root.optJSONObject("lists")?.let { o ->
+            backupLists.forEach { n -> o.optJSONArray(n)?.let { a -> setList(n, List(a.length()) { a.getString(it) }) } }
+        }
+        root.optJSONObject("maps")?.let { o ->
+            backupMaps.forEach { n ->
+                o.optJSONObject(n)?.let { m -> setMap(n, m.keys().asSequence().associateWith { k -> m.getString(k) }) }
+            }
+        }
+        root.optJSONObject("ints")?.let { o -> backupInts.forEach { n -> if (o.has(n)) setInt(n, o.getInt(n)) } }
+        root.optJSONObject("flags")?.let { o -> backupFlags.forEach { n -> if (o.has(n)) setFlag(n, o.getBoolean(n)) } }
+        return true
+    }
 
     // ---- parental PIN
     fun hasPin() = prefs.contains("pin_hash")
