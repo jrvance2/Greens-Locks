@@ -41,6 +41,7 @@ private fun SettingRow(label: String, desc: String, content: @Composable RowScop
 fun AppearanceScreen(
     accent: Int, bg: Int, cards: Int, text: Int, anim: Int, start: Int, ui: Int, onUi: (Int) -> Unit,
     onTheme: (Int, Int) -> Unit, railLabels: Boolean, onRail: (Boolean) -> Unit,
+    sounds: Boolean, onSounds: (Boolean) -> Unit,
     onAccent: (Int) -> Unit, onBg: (Int) -> Unit, onCards: (Int) -> Unit,
     onText: (Int) -> Unit, onAnim: (Int) -> Unit, onStart: (Int) -> Unit,
     onClose: () -> Unit,
@@ -95,6 +96,10 @@ fun AppearanceScreen(
         }
         SettingRow("Animations", "Reduced or Off is smoothest on slower devices") {
             ANIM_NAMES.forEachIndexed { i, n -> Chip(n, anim == i) { onAnim(i) } }
+        }
+        SettingRow("Navigation sounds", "A soft click as you move around (uses your TV's system sounds)") {
+            Chip("Off", !sounds) { onSounds(false) }
+            Chip("On", sounds) { onSounds(true) }
         }
         SettingRow("Start screen", "What opens when you launch Vance TV") {
             START_NAMES.forEachIndexed { i, n -> Chip(n, start == i) { onStart(i) } }

@@ -94,11 +94,13 @@ fun MultiViewScreen(
                                 update = { it.player = players.getOrNull(i) },
                                 modifier = Modifier.fillMaxSize(),
                             )
-                            Text(
-                                (if (focused == i) "🔊 " else "") + nameOf(e),
-                                color = Color.White,
-                                modifier = Modifier.align(Alignment.BottomStart).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 4.dp),
-                            )
+                            Row(
+                                Modifier.align(Alignment.BottomStart).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (focused == i) { SpeakerIcon(16.dp, Color.White); Spacer(Modifier.width(6.dp)) }
+                                Text(nameOf(e), color = Color.White)
+                            }
                         }
                     }
                     if (row.size < cols) Spacer(Modifier.weight(1f))

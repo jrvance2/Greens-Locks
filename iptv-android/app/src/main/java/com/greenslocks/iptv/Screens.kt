@@ -24,6 +24,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
@@ -265,16 +266,19 @@ fun HeroBanner(
         Modifier.fillMaxWidth().height(260.dp)
             .background(Brush.horizontalGradient(listOf(animatedWash.copy(alpha = 0.40f), animatedWash.copy(alpha = 0.16f), Palette.bg)))
     ) {
-        if (entry.kind != Kind.LIVE) {
-            Artwork(
-                backdrop.ifBlank { entry.icon }, "", Modifier.fillMaxSize().alpha(if (backdrop.isBlank()) 0.18f else 0.5f),
-                alignment = Alignment.TopCenter,
-            )
-            Box(
-                Modifier.fillMaxSize().background(
-                    Brush.horizontalGradient(listOf(Palette.bg.copy(alpha = 0.92f), Palette.bg.copy(alpha = 0.55f), Color.Transparent))
+        androidx.compose.animation.Crossfade(
+            targetState = Triple(backdrop.ifBlank { entry.icon }, entry.kind != Kind.LIVE, backdrop.isBlank()),
+            animationSpec = androidx.compose.animation.core.tween(Motion.SLOW, easing = Motion.ease),
+            label = "heroArt",
+        ) { (url, show, plain) ->
+            if (show) Box(Modifier.fillMaxSize()) {
+                Artwork(url, "", Modifier.fillMaxSize().alpha(if (plain) 0.18f else 0.5f), alignment = Alignment.TopCenter)
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.horizontalGradient(listOf(Palette.bg.copy(alpha = 0.92f), Palette.bg.copy(alpha = 0.55f), Color.Transparent))
+                    )
                 )
-            )
+            }
         }
         Row(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -545,5 +549,25 @@ fun BoxScope.NextUpCard(title: String, secs: Int) {
         Text(title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
         Text("Playing in ${secs}s", color = Palette.muted, modifier = Modifier.padding(top = 6.dp))
         Text("OK: play now   ·   Back: cancel", color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+/** Shown while the saved login connects, so the app never opens on a blank or half-built screen. */
+@Composable
+fun SplashScreen() {
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "splash")
+    val pulse by t.animateFloat(
+        0.55f, 1f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(900, easing = Motion.ease),
+            androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "pulse",
+    )
+    Box(Modifier.fillMaxSize().background(Palette.bg), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            BrandWordmark(34.sp, Modifier.graphicsLayer { alpha = pulse })
+            Text("Loading your library\u2026", color = Palette.muted, modifier = Modifier.padding(top = 18.dp))
+        }
     }
 }

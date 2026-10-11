@@ -33,6 +33,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -77,6 +80,7 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("tmdb_key")?.let { store.setGString("tmdbKey", it) }
         applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0), store.int("ui", 1))
         Dimens.railLabels = store.flag("railLabels", true)
+        Dimens.sounds = store.flag("sounds", false)
         pendingLaunch.value = intent.getStringExtra("play_entry")
         setContent { IptvTheme { App() } }
     }
@@ -251,6 +255,12 @@ private fun App() {
     var zapStrip by remember { mutableStateOf(store.flag("zapStrip", false)) }
     var stripIdx by remember { mutableStateOf<Int?>(null) }
     var stripTick by remember { mutableIntStateOf(0) }
+    var bootDone by remember { mutableStateOf(false) }
+    var sawBusy by remember { mutableStateOf(false) }
+    var focusedHome by remember { mutableStateOf<Entry?>(null) }
+    var pendingHome by remember { mutableStateOf<Entry?>(null) }
+    var shownScreen by remember { mutableIntStateOf(-1) }
+    val screenAlpha = remember { Animatable(0f) }
     var homeFilter by remember { mutableIntStateOf(0) }
     var heroBackdrop by remember { mutableStateOf("") }
     var mergeDupes by remember { mutableStateOf(store.flag("mergeDupes", true)) }
@@ -890,7 +900,7 @@ private fun App() {
         matchFps = store.flag("matchFps", true); liveTs = store.flag("liveTs", false)
         bufferMode = store.int("buffer", 1); resizeIdx = store.int("resize", 0).coerceIn(0, RESIZES.lastIndex)
         subSize = store.int("subSize", 1); sortMode = store.int("sortMode", 0)
-        Dimens.railLabels = store.flag("railLabels", true); zapStrip = store.flag("zapStrip", false); mergeDupes = store.flag("mergeDupes", true)
+        Dimens.railLabels = store.flag("railLabels", true); Dimens.sounds = store.flag("sounds", false); zapStrip = store.flag("zapStrip", false); mergeDupes = store.flag("mergeDupes", true)
         applyNow()
         switchProfile(activeProfile)
         toast("Settings restored")
@@ -1657,9 +1667,39 @@ private fun App() {
     }
 
     // ---- main UI
+    LaunchedEffect(provider) { if (provider != null) bootDone = true }
+    LaunchedEffect(busy) { if (busy) sawBusy = true else if (sawBusy) bootDone = true }
+    LaunchedEffect(Unit) { delay(20_000); bootDone = true }
+    LaunchedEffect(pendingHome) {
+        val p = pendingHome ?: return@LaunchedEffect
+        delay(350)
+        focusedHome = p
+    }
+    val showSplash = !bootDone && urlText.isNotBlank() && provider == null
+    val screenId = when {
+        showSplash -> 0
+        provider == null || showSetup -> 1
+        searchOpen -> 2
+        pickerOpen -> 3
+        multiOpen -> 4
+        appearanceOpen -> 5
+        fullscreen && current != null -> 0
+        guideOpen && guide != null -> 6
+        detailEntry != null -> 7
+        else -> 100 + tab.ordinal
+    }
+    LaunchedEffect(screenId) {
+        if (screenId == 0 || Dimens.animLevel == 2) {
+            screenAlpha.snapTo(1f); shownScreen = screenId
+        } else {
+            screenAlpha.snapTo(0.25f); shownScreen = screenId
+            screenAlpha.animateTo(1f, tween(if (Dimens.animLevel == 1) 100 else Motion.MED, easing = Motion.ease))
+        }
+    }
     Box(
         Modifier
             .fillMaxSize()
+            .graphicsLayer { alpha = if (screenId == 0) 1f else if (shownScreen == screenId) screenAlpha.value else 0.25f }
             .onPreviewKeyEvent { ev ->
                 if (!fullscreen || ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 infoTick++
@@ -1729,7 +1769,9 @@ private fun App() {
             }
             .then(if (fullscreen) Modifier.focusRequester(rootFocus).focusable() else Modifier)
     ) {
-        if (provider == null || showSetup) {
+        if (showSplash) {
+            SplashScreen()
+        } else if (provider == null || showSetup) {
             LoginScreen(
                 useUrl, urlText, server, user, pass, showPass, status, busy,
                 canCancel = provider != null, pair = pairInfo,
@@ -1798,6 +1840,8 @@ private fun App() {
                 onTheme = { a, b -> accentIdx = a; bgIdx = b; store.setInt("accent", a); store.setInt("bg", b); applyNow() },
                 railLabels = Dimens.railLabels,
                 onRail = { Dimens.railLabels = it; store.setFlag("railLabels", it) },
+                sounds = Dimens.sounds,
+                onSounds = { Dimens.sounds = it; store.setFlag("sounds", it) },
                 onAccent = { accentIdx = it; store.setInt("accent", it); applyNow() },
                 onBg = { bgIdx = it; store.setInt("bg", it); applyNow() },
                 onCards = { cardIdx = it; store.setInt("cards", it); applyNow() },
@@ -1905,8 +1949,9 @@ private fun App() {
                         Tab.HOME -> {
                             val cont = recentEntries.filter { visible(it) }.take(20)
                             val favs = favoriteEntries.filter { visible(it) }.take(20)
-                            val hero = cont.firstOrNull { it.kind != Kind.LIVE } ?: cont.firstOrNull()
+                            val baseHero = cont.firstOrNull { it.kind != Kind.LIVE } ?: cont.firstOrNull()
                                 ?: homeShelves.firstNotNullOfOrNull { s -> s.items.firstOrNull { visible(it) } }
+                            val hero = focusedHome ?: baseHero
                             val shelves = buildList {
                                 if (cont.isNotEmpty()) add(Triple("Continue watching", cont, true))
                                 if (favs.isNotEmpty()) add(Triple("Favorites", favs, true))
@@ -1918,7 +1963,7 @@ private fun App() {
                                 heroBackdrop = ""
                                 val h = hero ?: return@LaunchedEffect
                                 if (tmdbKey.isNotBlank() && h.kind != Kind.LIVE) {
-                                    delay(2500) // let the library and posters load first
+                                    delay(if (focusedHome == null) 2500L else 450L) // let the library and posters load first
                                     heroBackdrop = runCatching { Tmdb.backdropFor(tmdbKey, h.title, h.kind == Kind.SERIES) }.getOrDefault("")
                                 }
                             }
@@ -1960,13 +2005,12 @@ private fun App() {
                                         title, items, wide, ::titleFor, ::subFor, ::progressOf, ::isFav,
                                         onLongClick = { menuTarget = MenuTarget.EntryT(it) }, onOpen = ::onEntry,
                                         firstFocus = if (hero == null && i == 0) Modifier.focusRequester(firstItem) else Modifier,
+                                        onFocusEntry = { pendingHome = it },
                                     )
                                 }
                                 if (hero == null && shelves.isEmpty()) item {
-                                    Text(
-                                        if (busy) "Loading…" else "Nothing here yet. Open Live TV, Movies or Series to start.",
-                                        Modifier.padding(32.dp), color = Palette.muted,
-                                    )
+                                    if (busy) Column(Modifier.padding(24.dp)) { repeat(3) { SkeletonRow() } }
+                                    else EmptyState("Nothing here yet", "Open Live TV, Movies or Series to start watching.", "Open Live TV") { openTab(Tab.LIVE) }
                                 }
                             }
                         }
@@ -2001,6 +2045,12 @@ private fun App() {
                                 )
                                 LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = liveState) {
                                     if (busy && shownEntries.isEmpty()) items(8) { SkeletonRow() }
+                                    if (!busy && shownEntries.isEmpty()) item {
+                                        EmptyState(
+                                            "No channels here",
+                                            if (query.isNotBlank()) "Nothing matches \"$query\"." else "Pick a category on the left to see its channels.",
+                                        )
+                                    }
                                     itemsIndexed(shownEntries) { i, e ->
                                         LaunchedEffect(e.id) { guide?.load(e) }
                                         val (cur, _) = nowNext(guide?.cache?.get(e.id).orEmpty(), now)

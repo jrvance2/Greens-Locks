@@ -40,6 +40,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalView
+import android.view.SoundEffectConstants
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.animation.Crossfade
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 
@@ -52,16 +61,18 @@ fun FocusCard(
     scaleOnFocus: Float = 1.08f,
     borderWidth: Dp = 3.dp,
     onLongClick: () -> Unit = {},
+    onFocus: () -> Unit = {},
     onClick: () -> Unit,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
+    val view = LocalView.current
     val source = remember { MutableInteractionSource() }
     val focused by source.collectIsFocusedAsState()
     val level = Dimens.animLevel
     val grows = scaleOnFocus != 1f && level != 2
     val target = if (level == 1) 1f + (scaleOnFocus - 1f) * 0.4f else scaleOnFocus
     val scale by animateFloatAsState(
-        if (focused && grows) target else 1f, tween(if (level == 1) 60 else 100), label = "focusScale",
+        if (focused && grows) target else 1f, tween(if (level == 1) 60 else Motion.FAST, easing = Motion.ease), label = "focusScale",
     )
     Box(
         modifier
@@ -77,6 +88,12 @@ fun FocusCard(
             // Only draw the ring while focused: a 0.dp border still paints a hairline.
             .then(if (focused) Modifier.border(borderWidth, Palette.accent, shape) else Modifier)
             .clip(shape)
+            .onFocusChanged {
+                if (it.isFocused) {
+                    if (Dimens.sounds) view.playSoundEffect(SoundEffectConstants.NAVIGATION_RIGHT)
+                    onFocus()
+                }
+            }
             .combinedClickable(interactionSource = source, indication = null, onLongClick = onLongClick, onClick = onClick)
     ) { content(focused) }
 }
@@ -172,10 +189,11 @@ fun PosterCard(
     width: Dp? = Dimens.posterWidth,
     fit: ContentScale = ContentScale.Crop,
     onLongClick: () -> Unit = {},
+    onFocus: () -> Unit = {},
     onClick: () -> Unit,
 ) {
     Column(if (width != null) Modifier.width(width) else Modifier.fillMaxWidth()) {
-        FocusCard(modifier.fillMaxWidth().aspectRatio(2f / 3f), onLongClick = onLongClick, onClick = onClick) {
+        FocusCard(modifier.fillMaxWidth().aspectRatio(2f / 3f), onLongClick = onLongClick, onFocus = onFocus, onClick = onClick) {
             Artwork(icon, title, Modifier.fillMaxSize(), fit)
             if (favorite) {
                 Text("★", Modifier.align(Alignment.TopEnd).padding(6.dp), color = Palette.accent)
@@ -203,11 +221,12 @@ fun WideCard(
     width: Dp? = Dimens.wideWidth,
     fit: ContentScale = ContentScale.Crop,
     onLongClick: () -> Unit = {},
+    onFocus: () -> Unit = {},
     onClick: () -> Unit,
 ) {
     FocusCard(
         (if (width != null) modifier.width(width) else modifier.fillMaxWidth()).aspectRatio(16f / 9f),
-        onLongClick = onLongClick, onClick = onClick,
+        onLongClick = onLongClick, onFocus = onFocus, onClick = onClick,
     ) {
         Artwork(icon, title, Modifier.fillMaxSize(), fit, Alignment.TopCenter)
         Box(
@@ -240,6 +259,7 @@ fun ShelfRow(
     onLongClick: (Entry) -> Unit,
     onOpen: (Entry) -> Unit,
     firstFocus: Modifier = Modifier,
+    onFocusEntry: (Entry) -> Unit = {},
 ) {
     Column {
         SectionTitle(title)
@@ -253,12 +273,12 @@ fun ShelfRow(
                     WideCard(
                         titleOf(e), subtitleOf(e), e.icon, isFavorite(e), progressOf(e), mod,
                         fit = if (e.kind == Kind.LIVE) ContentScale.Fit else ContentScale.Crop,
-                        onLongClick = { onLongClick(e) },
+                        onLongClick = { onLongClick(e) }, onFocus = { onFocusEntry(e) },
                     ) { onOpen(e) }
                 } else {
                     PosterCard(
                         titleOf(e), e.icon, subtitleOf(e), isFavorite(e), progressOf(e), mod,
-                        onLongClick = { onLongClick(e) },
+                        onLongClick = { onLongClick(e) }, onFocus = { onFocusEntry(e) },
                     ) { onOpen(e) }
                 }
             }
@@ -382,5 +402,47 @@ fun BrandWordmark(textSize: TextUnit, modifier: Modifier = Modifier) {
                 .background(Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2)))
                 .padding(horizontal = tile * 0.16f, vertical = tile * 0.02f),
         )
+    }
+}
+
+/** Friendly placeholder for screens with nothing to show yet. */
+@Composable
+fun EmptyState(title: String, body: String, action: String? = null, onAction: () -> Unit = {}) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier.size(72.dp).clip(RoundedCornerShape(20.dp))
+                .background(Brush.linearGradient(listOf(Palette.surfaceHi, Palette.surface))),
+            contentAlignment = Alignment.Center,
+        ) { Text("\u25B6", color = Palette.accent, style = MaterialTheme.typography.headlineMedium) }
+        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 18.dp))
+        Text(body, color = Palette.muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp))
+        if (action != null) ActionButton(action, Modifier.padding(top = 18.dp), onClick = onAction)
+    }
+}
+
+@Composable
+fun BellIcon(size: Dp, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(size)) {
+        val s = this.size.minDimension
+        drawCircle(color, radius = s * 0.30f, center = Offset(s * 0.5f, s * 0.40f))
+        drawRect(color, topLeft = Offset(s * 0.20f, s * 0.40f), size = Size(s * 0.60f, s * 0.32f))
+        drawRect(color, topLeft = Offset(s * 0.10f, s * 0.70f), size = Size(s * 0.80f, s * 0.10f))
+        drawCircle(color, radius = s * 0.09f, center = Offset(s * 0.5f, s * 0.90f))
+    }
+}
+
+@Composable
+fun SpeakerIcon(size: Dp, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(size)) {
+        val s = this.size.minDimension
+        val p = Path().apply {
+            moveTo(s * 0.10f, s * 0.38f); lineTo(s * 0.32f, s * 0.38f); lineTo(s * 0.55f, s * 0.18f)
+            lineTo(s * 0.55f, s * 0.82f); lineTo(s * 0.32f, s * 0.62f); lineTo(s * 0.10f, s * 0.62f); close()
+        }
+        drawPath(p, color)
+        drawArc(color, -45f, 90f, false, Offset(s * 0.45f, s * 0.30f), Size(s * 0.40f, s * 0.40f), style = Stroke(s * 0.08f))
     }
 }

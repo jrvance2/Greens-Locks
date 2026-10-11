@@ -191,10 +191,16 @@ private fun GuideRow(
                                     style = MaterialTheme.typography.labelLarge,
                                     color = if (past) Palette.muted else Palette.text,
                                 )
-                                Text(
-                                    "${hhmm(p.start)} – ${hhmm(p.stop)}" + (if (past && p.archive) "  ↺" else "") + (if (isReminded(p)) "  🔔" else ""),
-                                    maxLines = 1, color = Palette.muted, style = MaterialTheme.typography.bodySmall,
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "${hhmm(p.start)} – ${hhmm(p.stop)}" + (if (past && p.archive) "  ↺" else ""),
+                                        maxLines = 1, color = Palette.muted, style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    if (isReminded(p)) {
+                                        Spacer(Modifier.width(6.dp))
+                                        BellIcon(12.dp, Palette.accent)
+                                    }
+                                }
                             }
                             }
                         }

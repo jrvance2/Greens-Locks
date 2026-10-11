@@ -2,6 +2,8 @@ package com.greenslocks.iptv
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -17,6 +19,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+
+/** Shared timings and easing so every animation in the app feels related. */
+object Motion {
+    const val FAST = 110
+    const val MED = 220
+    const val SLOW = 380
+    val ease = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+}
 
 /** Colors are Compose state, so changing the accent or background repaints the whole app live. */
 object Palette {
@@ -38,6 +48,8 @@ object Dimens {
     var uiScale by mutableFloatStateOf(0.85f)
     /** false = icons only in the side menu (gives content more width). */
     var railLabels by mutableStateOf(true)
+    /** Soft click sound when focus moves (uses the system's navigation sounds). */
+    var sounds by mutableStateOf(false)
     /** 0 = full animations, 1 = reduced, 2 = off. */
     var animLevel by mutableIntStateOf(0)
 
@@ -92,6 +104,7 @@ fun IptvTheme(content: @Composable () -> Unit) {
     val d = LocalDensity.current
     CompositionLocalProvider(LocalDensity provides Density(d.density * Dimens.uiScale, d.fontScale * Dimens.textScale)) {
         MaterialTheme(
+            typography = VanceTypography,
             colorScheme = darkColorScheme(
                 primary = Palette.accent, onPrimary = Color.White,
                 secondary = Palette.accent2,
@@ -101,7 +114,9 @@ fun IptvTheme(content: @Composable () -> Unit) {
                 error = Palette.live,
             ),
         ) {
-            Surface(color = Palette.bg, modifier = Modifier.fillMaxSize(), content = content)
+            Surface(color = Palette.bg, modifier = Modifier.fillMaxSize()) {
+                ProvideTextStyle(VanceTypography.bodyMedium, content = content)
+            }
         }
     }
 }
