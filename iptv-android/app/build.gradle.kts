@@ -61,9 +61,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
     implementation("androidx.media3:media3-exoplayer:1.5.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.0")
-    implementation("androidx.media3:media3-ui:1.5.0"
+    implementation("androidx.media3:media3-ui:1.5.0")
     // Software decoder for Dolby Digital / Digital+ / DTS and more, so 5.1 works even when the device decoder only gives stereo.
-    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1"))
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("com.google.zxing:core:3.5.3")
