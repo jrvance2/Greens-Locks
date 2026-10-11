@@ -61,8 +61,8 @@ fun FocusCard(
     scaleOnFocus: Float = 1.08f,
     borderWidth: Dp = 3.dp,
     onLongClick: () -> Unit = {},
-    onFocus: () -> Unit = {},
     onClick: () -> Unit,
+    onFocus: () -> Unit = {},
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     val view = LocalView.current
