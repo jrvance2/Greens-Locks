@@ -48,8 +48,12 @@ fun FocusCard(
 ) {
     val source = remember { MutableInteractionSource() }
     val focused by source.collectIsFocusedAsState()
-    val grows = scaleOnFocus != 1f
-    val scale by animateFloatAsState(if (focused && grows) scaleOnFocus else 1f, tween(100), label = "focusScale")
+    val level = Dimens.animLevel
+    val grows = scaleOnFocus != 1f && level != 2
+    val target = if (level == 1) 1f + (scaleOnFocus - 1f) * 0.4f else scaleOnFocus
+    val scale by animateFloatAsState(
+        if (focused && grows) target else 1f, tween(if (level == 1) 60 else 100), label = "focusScale",
+    )
     Box(
         modifier
             .then(
@@ -63,8 +67,6 @@ fun FocusCard(
     ) { content(focused) }
 }
 
-private val ArtBrush = Brush.linearGradient(listOf(Palette.surfaceHi, Palette.surface))
-
 @Composable
 fun Artwork(
     url: String,
@@ -73,14 +75,16 @@ fun Artwork(
     fit: ContentScale = ContentScale.Crop,
     alignment: Alignment = Alignment.Center,
 ) {
-    Box(modifier.background(ArtBrush), contentAlignment = Alignment.Center) {
+    val brush = remember(Palette.surfaceHi, Palette.surface) { Brush.linearGradient(listOf(Palette.surfaceHi, Palette.surface)) }
+    Box(modifier.background(brush), contentAlignment = Alignment.Center) {
         Text(
             title.trim().take(1).uppercase(),
             style = MaterialTheme.typography.headlineMedium, color = Palette.muted,
         )
         if (url.isNotBlank()) {
             val ctx = LocalContext.current
-            val request = remember(url) { ImageRequest.Builder(ctx).data(url).crossfade(true).build() }
+            val fade = Dimens.animLevel == 0
+            val request = remember(url, fade) { ImageRequest.Builder(ctx).data(url).crossfade(fade).build() }
             AsyncImage(
                 model = request,
                 contentDescription = null, contentScale = fit, alignment = alignment,
@@ -113,7 +117,7 @@ fun PosterCard(
     favorite: Boolean = false,
     progress: Float? = null,
     modifier: Modifier = Modifier,
-    width: Dp? = 140.dp,
+    width: Dp? = Dimens.posterWidth,
     fit: ContentScale = ContentScale.Crop,
     onLongClick: () -> Unit = {},
     onClick: () -> Unit,
@@ -144,7 +148,7 @@ fun WideCard(
     favorite: Boolean = false,
     progress: Float? = null,
     modifier: Modifier = Modifier,
-    width: Dp? = 250.dp,
+    width: Dp? = Dimens.wideWidth,
     fit: ContentScale = ContentScale.Crop,
     onLongClick: () -> Unit = {},
     onClick: () -> Unit,

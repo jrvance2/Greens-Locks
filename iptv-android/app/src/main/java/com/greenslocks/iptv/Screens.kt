@@ -1,6 +1,7 @@
 package com.greenslocks.iptv
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,8 +19,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -31,49 +39,103 @@ import kotlinx.coroutines.delay
 
 data class Shelf(val title: String, val items: List<Entry>)
 
+/** The accent color faded into the background, so gradients follow the chosen theme. */
+fun accentWash(alpha: Float, second: Boolean = false): Color =
+    (if (second) Palette.accent2 else Palette.accent).copy(alpha = alpha).compositeOver(Palette.bg)
+
 // ------------------------------------------------------------------ navigation rail
 
+enum class RailIconType { HOME, LIVE, MOVIES, SERIES, FAVORITES, GUIDE, SETTINGS }
+
+data class RailItem(val icon: RailIconType, val label: String, val selected: Boolean)
+
 @Composable
-fun NavItem(glyph: String, label: String, selected: Boolean, compact: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    FocusCard(modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(12.dp), 1f, 2.dp, onClick = onClick) { focused ->
-        Row(
-            Modifier.fillMaxWidth()
-                .background(if (focused) Palette.accent.copy(alpha = 0.28f) else if (selected) Palette.surfaceHi else Color.Transparent)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(glyph, fontSize = 20.sp, color = if (selected || focused) Palette.accent else Palette.muted, modifier = if (compact) Modifier else Modifier.width(30.dp))
-            if (!compact) {
-                Text(
-                    label, maxLines = 1, color = if (selected || focused) Palette.text else Palette.muted,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+fun RailIcon(type: RailIconType, color: Color, modifier: Modifier = Modifier.size(26.dp)) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        when (type) {
+            RailIconType.HOME -> drawPath(
+                Path().apply {
+                    moveTo(w * 0.08f, h * 0.5f); lineTo(w * 0.5f, h * 0.1f); lineTo(w * 0.92f, h * 0.5f)
+                    lineTo(w * 0.8f, h * 0.5f); lineTo(w * 0.8f, h * 0.9f); lineTo(w * 0.2f, h * 0.9f)
+                    lineTo(w * 0.2f, h * 0.5f); close()
+                }, color,
+            )
+            RailIconType.LIVE -> {
+                drawCircle(color, radius = w * 0.4f, style = Stroke(width = w * 0.11f))
+                drawCircle(color, radius = w * 0.16f)
+            }
+            RailIconType.MOVIES -> drawPath(
+                Path().apply { moveTo(w * 0.25f, h * 0.1f); lineTo(w * 0.25f, h * 0.9f); lineTo(w * 0.92f, h * 0.5f); close() }, color,
+            )
+            RailIconType.SERIES -> for (k in 0..2) {
+                drawRoundRect(
+                    color, topLeft = Offset(w * (0.08f + k * 0.08f), h * (0.1f + k * 0.3f)),
+                    size = Size(w * 0.7f, h * 0.22f), cornerRadius = CornerRadius(w * 0.06f),
                 )
+            }
+            RailIconType.FAVORITES -> drawPath(
+                Path().apply {
+                    for (i in 0 until 10) {
+                        val r = if (i % 2 == 0) w * 0.46f else w * 0.2f
+                        val ang = Math.toRadians((-90 + i * 36).toDouble())
+                        val x = w * 0.5f + (r * Math.cos(ang)).toFloat()
+                        val y = h * 0.54f + (r * Math.sin(ang)).toFloat()
+                        if (i == 0) moveTo(x, y) else lineTo(x, y)
+                    }
+                    close()
+                }, color,
+            )
+            RailIconType.GUIDE -> for (gx in 0..2) for (gy in 0..2) {
+                drawRoundRect(
+                    color, topLeft = Offset(w * (0.06f + gx * 0.32f), h * (0.06f + gy * 0.32f)),
+                    size = Size(w * 0.24f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f),
+                )
+            }
+            RailIconType.SETTINGS -> {
+                drawCircle(color, radius = w * 0.38f, style = Stroke(width = w * 0.16f))
+                drawCircle(color, radius = w * 0.12f)
             }
         }
     }
 }
 
 @Composable
-fun NavRail(
-    items: List<Triple<String, String, Boolean>>,
-    footer: String,
-    compact: Boolean,
+fun IconRail(
+    items: List<RailItem>,
     modifier: Modifier = Modifier,
-    firstFocus: Modifier = Modifier,
     onItem: (Int) -> Unit,
 ) {
     Column(
-        modifier.fillMaxHeight().background(Palette.surface).padding(horizontal = 12.dp, vertical = 20.dp),
+        modifier.fillMaxHeight().background(Palette.surface).padding(horizontal = 8.dp, vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (!compact) {
-            BrandWordmark(15.sp, Modifier.padding(start = 6.dp, bottom = 24.dp))
-        }
-        items.forEachIndexed { i, (glyph, label, selected) ->
-            NavItem(glyph, label, selected, compact, if (i == 0) firstFocus else Modifier) { onItem(i) }
-        }
-        Spacer(Modifier.weight(1f))
-        if (!compact) {
-            Text(footer, Modifier.padding(start = 14.dp), color = Palette.muted, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+        Box(
+            Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
+                .background(Brush.linearGradient(listOf(Palette.accent, Palette.accent2))),
+            contentAlignment = Alignment.Center,
+        ) { Text("V", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp) }
+        Spacer(Modifier.height(14.dp))
+        items.forEachIndexed { i, item ->
+            FocusCard(Modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(12.dp), 1f, 2.dp, onClick = { onItem(i) }) { focused ->
+                Column(
+                    Modifier.fillMaxWidth()
+                        .background(
+                            if (focused) Palette.accent.copy(alpha = 0.3f)
+                            else if (item.selected) Palette.accent.copy(alpha = 0.18f) else Color.Transparent
+                        )
+                        .padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    RailIcon(item.icon, if (item.selected || focused) Palette.accent else Palette.muted)
+                    Text(
+                        item.label, fontSize = 10.sp, maxLines = 1,
+                        color = if (item.selected || focused) Palette.text else Palette.muted,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
+            }
         }
     }
 }
@@ -102,7 +164,7 @@ fun LoginScreen(
 ) {
     Box(
         Modifier.fillMaxSize().background(
-            Brush.linearGradient(listOf(Color(0xFF0B1226), Palette.bg, Color(0xFF14102B)))
+            Brush.linearGradient(listOf(accentWash(0.22f), Palette.bg, accentWash(0.12f, true)))
         ),
         contentAlignment = Alignment.Center,
     ) {
@@ -167,7 +229,7 @@ fun HeroBanner(
 ) {
     Box(
         Modifier.fillMaxWidth().height(260.dp)
-            .background(Brush.horizontalGradient(listOf(Color(0xFF1E2C57), Color(0xFF14102B), Palette.bg)))
+            .background(Brush.horizontalGradient(listOf(accentWash(0.32f), accentWash(0.14f, true), Palette.bg)))
     ) {
         Row(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -218,7 +280,7 @@ fun DetailScreen(
 
     Box(
         Modifier.fillMaxSize().background(
-            Brush.linearGradient(listOf(Color(0xFF16204A), Palette.bg, Color(0xFF120E26)))
+            Brush.linearGradient(listOf(accentWash(0.26f), Palette.bg, accentWash(0.12f, true)))
         )
     ) {
         Row(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 28.dp)) {
@@ -365,15 +427,19 @@ fun BrowseHeader(
     query: String,
     onQuery: (String) -> Unit,
     searchLabel: String = "Search",
+    searchWidth: Dp = 260.dp,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text(
+            title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+        )
         trailing()
         Spacer(Modifier.width(12.dp))
         OutlinedTextField(
             value = query, onValueChange = onQuery, singleLine = true,
-            label = { Text(searchLabel) }, modifier = Modifier.width(260.dp),
+            label = { Text(searchLabel) }, modifier = Modifier.width(searchWidth),
         )
     }
 }

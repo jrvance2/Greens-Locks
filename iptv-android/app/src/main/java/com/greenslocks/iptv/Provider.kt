@@ -22,6 +22,8 @@ interface Provider {
     /** Every live channel (streamed, minimal fields) for search and channel-number jumps. */
     suspend fun allLive(): List<Entry>
     suspend fun detail(entry: Entry): Detail?
+    /** How many items each category holds (streamed and tallied, nothing retained). */
+    suspend fun counts(kind: Kind): Map<String, Int>
     fun streamUrl(entry: Entry): String
 }
 
@@ -116,6 +118,29 @@ class XtreamProvider(
         }
     }
 
+    override suspend fun counts(kind: Kind): Map<String, Int> = withContext(Dispatchers.IO) {
+        val action = when (kind) {
+            Kind.LIVE -> "get_live_streams"
+            Kind.MOVIE -> "get_vod_streams"
+            Kind.SERIES -> "get_series"
+            Kind.EPISODE -> return@withContext emptyMap<String, Int>()
+        }
+        val conn = URL(api(action)).openConnection().apply { connectTimeout = 15000; readTimeout = 180000 }
+        JsonReader(conn.getInputStream().bufferedReader()).use { r ->
+            val out = HashMap<String, Int>()
+            r.beginArray()
+            while (r.hasNext()) {
+                var cat = ""
+                r.beginObject()
+                while (r.hasNext()) { if (r.nextName() == "category_id") cat = r.str() else r.skipValue() }
+                r.endObject()
+                out[cat] = (out[cat] ?: 0) + 1
+            }
+            r.endArray()
+            out
+        }
+    }
+
     private var seriesCache: Pair<String, JSONObject>? = null
 
     private suspend fun seriesInfo(id: String): JSONObject {
@@ -198,6 +223,8 @@ class M3uProvider(private val channels: List<Channel>) : Provider {
         channels.mapIndexed { i, c -> Entry(Kind.LIVE, c.url, c.name, icon = c.logo, num = i + 1, cat = c.group) }
 
     override suspend fun detail(entry: Entry): Detail? = null
+    override suspend fun counts(kind: Kind): Map<String, Int> =
+        if (kind == Kind.LIVE) channels.groupingBy { it.group }.eachCount() else emptyMap()
     override suspend fun episodes(series: Entry): List<Entry> = emptyList()
     override suspend fun epg(entry: Entry, limit: Int): List<Programme> = emptyList()
     override fun streamUrl(entry: Entry): String = entry.id

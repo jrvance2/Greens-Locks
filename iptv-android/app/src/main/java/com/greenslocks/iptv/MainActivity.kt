@@ -56,9 +56,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Lets you set the playlist from a PC without typing on the remote:
         // adb shell am start -n com.greenslocks.iptv/.MainActivity --es playlist_url "<url>"
-        intent.getStringExtra("playlist_url")?.let {
-            Store(getSharedPreferences("iptv", MODE_PRIVATE)).setUrl(it)
-        }
+        val store = Store(getSharedPreferences("iptv", MODE_PRIVATE))
+        intent.getStringExtra("playlist_url")?.let { store.setUrl(it) }
+        applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0))
         setContent { IptvTheme { App() } }
     }
 }
@@ -150,6 +150,25 @@ private fun App() {
     var detail by remember { mutableStateOf<Detail?>(null) }
     var homeShelves by remember { mutableStateOf(emptyList<Shelf>()) }
     var wantGuide by remember { mutableStateOf(false) }
+    var pinnedCats by remember { mutableStateOf(store.list("pinCats").toSet()) }
+    var counts by remember { mutableStateOf(emptyMap<Kind, Map<String, Int>>()) }
+    val countsLoading = remember { mutableSetOf<Kind>() }
+    var catFilter by remember { mutableStateOf("") }
+    var catRegion by remember { mutableStateOf("*all") }
+    var pickerOpen by remember { mutableStateOf(false) }
+    var pickerTab by remember { mutableIntStateOf(0) }
+    var appearanceOpen by remember { mutableStateOf(false) }
+    var accentIdx by remember { mutableIntStateOf(store.int("accent", 0)) }
+    var bgIdx by remember { mutableIntStateOf(store.int("bg", 0)) }
+    var cardIdx by remember { mutableIntStateOf(store.int("cards", 1)) }
+    var textIdx by remember { mutableIntStateOf(store.int("text", 1)) }
+    var animIdx by remember { mutableIntStateOf(store.int("anim", 0)) }
+    var startIdx by remember { mutableIntStateOf(store.int("start", 1)) }
+    var startTick by remember { mutableIntStateOf(0) }
+    var panelOpen by remember { mutableStateOf(false) }
+    var panelMode by remember { mutableIntStateOf(0) }
+    var panelCat by remember { mutableStateOf<Category?>(null) }
+    var panelChannels by remember { mutableStateOf(emptyList<Entry>()) }
 
     // ---- playback state
     var current by remember { mutableStateOf<Entry?>(null) }
@@ -297,6 +316,16 @@ private fun App() {
         hiddenCats = if (k in hiddenCats) hiddenCats - k else hiddenCats + k
         store.setList("hidCats", hiddenCats.toList())
     }
+    fun togglePinnedCat(k: String) {
+        pinnedCats = if (k in pinnedCats) pinnedCats - k else pinnedCats + k
+        store.setList("pinCats", pinnedCats.toList())
+    }
+    fun setHiddenMany(kind: Kind, ids: Collection<String>, hidden: Boolean) {
+        val keys = ids.map { catKey(kind, it) }.toSet()
+        hiddenCats = if (hidden) hiddenCats + keys else hiddenCats - keys
+        store.setList("hidCats", hiddenCats.toList())
+    }
+    fun applyNow() = applyAppearance(accentIdx, bgIdx, cardIdx, textIdx, animIdx)
     fun toggleLockedCat(k: String) {
         lockedCats = if (k in lockedCats) lockedCats - k else lockedCats + k
         store.setList("lockCats", lockedCats.toList())
@@ -308,6 +337,18 @@ private fun App() {
             busy = true
             runCatching { block() }.onFailure { status = "Failed: ${redact(it.message)}" }
             busy = false
+        }
+    }
+
+    fun loadCounts(kind: Kind) {
+        val p = provider ?: return
+        if (counts.containsKey(kind) || kind == Kind.EPISODE) return
+        if (kind != Kind.LIVE && !p.supportsVod) return
+        if (!countsLoading.add(kind)) return
+        scope.launch {
+            val r = runCatching { p.counts(kind) }.getOrNull()
+            if (r != null) counts = counts + (kind to r)
+            countsLoading.remove(kind)
         }
     }
 
@@ -340,6 +381,7 @@ private fun App() {
         catCache.clear()
         category = null; series = null; entries = emptyList(); episodes = emptyList()
         detailEntry = null; detail = null; allLive = null; query = ""; homeShelves = emptyList()
+        counts = emptyMap(); countsLoading.clear(); catFilter = ""; catRegion = "*all"
     }
 
     /** A few poster shelves for the home screen: first categories of movies and series. */
@@ -389,6 +431,14 @@ private fun App() {
             if (current == null) {
                 current = store.string("last")?.let(::decodeEntry)?.takeIf { it.kind == Kind.LIVE }
             }
+            startTick++
+            if (store.string("picked") == null) {
+                val total = runCatching {
+                    ensureCategories(p, Tab.LIVE); ensureCategories(p, Tab.MOVIES); ensureCategories(p, Tab.SERIES)
+                    listOf(Tab.LIVE, Tab.MOVIES, Tab.SERIES).sumOf { catCache[it]?.size ?: 0 }
+                }.getOrDefault(0)
+                if (total > 40) { pickerTab = 0; pickerOpen = true }
+            }
         }
     }
     LaunchedEffect(Unit) { if (urlText.isNotBlank()) connect() }
@@ -403,6 +453,7 @@ private fun App() {
         lockedCats = store.list("lockCats").toSet()
         renames = store.map("renames")
         catOrder = store.map("catOrder")
+        pinnedCats = store.list("pinCats").toSet()
         player.stop()
         current = null; fullscreen = false; provider = null
         resetBrowsing()
@@ -424,6 +475,7 @@ private fun App() {
     }
     fun openTab(t: Tab) {
         tab = t; query = ""; category = null; entries = emptyList()
+        catFilter = ""; catRegion = "*all"
         val p = provider ?: return
         if (t.browsable()) launchLoad {
             loadCategories(p, t)
@@ -463,8 +515,52 @@ private fun App() {
         }
     }
 
+    fun openPanel() {
+        val p = provider ?: return
+        val e = current ?: return
+        panelMode = 0; panelOpen = true
+        val catId = e.cat
+        scope.launch {
+            runCatching {
+                ensureCategories(p, Tab.LIVE)
+                val c = catCache[Tab.LIVE]?.firstOrNull { it.id == catId } ?: Category(catId, "")
+                panelCat = c
+                panelChannels = if (category?.id == catId && entries.isNotEmpty()) entries else p.entries(Kind.LIVE, c)
+                if (catId.isBlank()) panelMode = 1
+            }
+        }
+    }
+    fun panelPick(c: Category) {
+        val p = provider ?: return
+        panelMode = 0; panelCat = c; panelChannels = emptyList()
+        scope.launch { panelChannels = runCatching { p.entries(Kind.LIVE, c) }.getOrDefault(emptyList()) }
+    }
+
     // ---- derived lists
     val cats = remember(catCache[tab], hiddenCats, showHidden, renames, catOrder, sortAz, tab) { orderedCats(tab) }
+    val kindNow = tab.kind() ?: Kind.LIVE
+    val regionTabs = remember(cats, pinnedCats, kindNow) {
+        val byRegion = cats.groupingBy { regionOf(it.name) }.eachCount().toList()
+            .sortedWith(compareBy({ it.first == "Other" }, { -it.second }))
+        buildList {
+            add("*all" to "All")
+            if (cats.any { catKey(kindNow, it.id) in pinnedCats }) add("*pin" to "★")
+            if (byRegion.size > 1) byRegion.forEach { add(it.first to it.first) }
+        }
+    }
+    val panelRows = remember(
+        cats, catFilter, catRegion, counts, pinnedCats, renames, hiddenCats, lockedCats, unlocked, hasPin, lockAdult, tab,
+    ) {
+        val kind = tab.kind()
+        if (kind == null) emptyList() else cats.filter { c ->
+            val k = catKey(kind, c.id)
+            (catFilter.isBlank() || catName(kind, c).contains(catFilter, ignoreCase = true)) &&
+                when (catRegion) { "*all" -> true; "*pin" -> k in pinnedCats; else -> regionOf(c.name) == catRegion }
+        }.map { c ->
+            val k = catKey(kind, c.id)
+            CatRow(c, catName(kind, c), counts[kind]?.get(c.id), k in pinnedCats, catLocked(kind, c), k in hiddenCats)
+        }
+    }
     val favoriteEntries = remember(favorites) { favorites.mapNotNull(::decodeEntry) }
     val recentEntries = remember(history) { history.mapNotNull(::decodeEntry) }
     val searching = tab == Tab.LIVE && query.length >= 2
@@ -591,6 +687,31 @@ private fun App() {
 
     val firstItem = remember { FocusRequester() }
     val rootFocus = remember { FocusRequester() }
+    val panelFocus = remember { FocusRequester() }
+    val catListState = rememberLazyListState()
+    LaunchedEffect(tab) { catListState.scrollToItem(0) }
+    LaunchedEffect(tab, provider) { tab.kind()?.let { loadCounts(it) } }
+    LaunchedEffect(pickerOpen) {
+        if (!pickerOpen) return@LaunchedEffect
+        val p = provider ?: return@LaunchedEffect
+        runCatching { listOf(Tab.LIVE, Tab.MOVIES, Tab.SERIES).forEach { ensureCategories(p, it) } }
+        loadCounts(Kind.LIVE); loadCounts(Kind.MOVIE); loadCounts(Kind.SERIES)
+    }
+    LaunchedEffect(startTick) {
+        if (startTick == 0) return@LaunchedEffect
+        when (startIdx) {
+            1 -> openTab(Tab.LIVE)
+            2 -> { openTab(Tab.LIVE); current?.takeIf { it.kind == Kind.LIVE }?.let { playNow(it, true) } }
+        }
+    }
+    LaunchedEffect(panelOpen, panelMode, panelChannels) {
+        if (panelOpen) {
+            repeat(15) { delay(80); if (runCatching { panelFocus.requestFocus() }.isSuccess) return@LaunchedEffect }
+        } else if (fullscreen) {
+            delay(50); runCatching { rootFocus.requestFocus() }
+        }
+    }
+    LaunchedEffect(fullscreen) { if (!fullscreen) panelOpen = false }
     // Scroll positions live here so they survive the screen being swapped for an overlay.
     val homeState = rememberLazyListState()
     val liveState = rememberLazyListState()
@@ -611,12 +732,15 @@ private fun App() {
     LaunchedEffect(fullscreen) { if (fullscreen) { delay(50); runCatching { rootFocus.requestFocus() } } }
     val liveFocusIdx = shownEntries.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
 
-    val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null)
+    val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null) || pickerOpen || appearanceOpen
     BackHandler(enabled = showSetup && provider != null) { showSetup = false }
     BackHandler(enabled = provider != null && !showSetup && tab != Tab.HOME && !overlayActive) { openTab(Tab.HOME) }
     BackHandler(enabled = detailEntry != null) { closeDetail() }
     BackHandler(enabled = fullscreen) { fullscreen = false; listVersion++ }
     BackHandler(enabled = guideOpen) { guideOpen = false; listVersion++ }
+    BackHandler(enabled = panelOpen) { panelOpen = false }
+    BackHandler(enabled = pickerOpen) { store.setString("picked", "1"); pickerOpen = false; listVersion++ }
+    BackHandler(enabled = appearanceOpen) { appearanceOpen = false; listVersion++ }
 
     // ---- dialogs UI
     pinRequest?.let { req ->
@@ -657,6 +781,7 @@ private fun App() {
                 val c = target.cat
                 val k = catKey(kind, c.id)
                 ActionMenuDialog(catName(kind, c), buildList {
+                    add(MenuItem(if (k in pinnedCats) "Unpin from top" else "Pin to top") { togglePinnedCat(k) })
                     add(MenuItem("Rename…") { textPrompt = TextPrompt("Rename", catName(kind, c)) { rename(k, it) } })
                     if (k in renames) add(MenuItem("Reset name") { rename(k, "") })
                     add(MenuItem(if (k in hiddenCats) "Unhide" else "Hide") { toggleHiddenCat(k) })
@@ -742,6 +867,8 @@ private fun App() {
                     store.saveProfiles(profiles)
                     switchProfile(0)
                 })
+                add(MenuItem("Appearance…") { appearanceOpen = true })
+                add(MenuItem("Choose categories…") { pickerTab = 0; pickerOpen = true })
                 add(MenuItem("Sort A–Z: ${if (sortAz) "on" else "off"}", close = false) {
                     sortAz = !sortAz; store.setFlag("sortAz", sortAz)
                 })
@@ -769,26 +896,6 @@ private fun App() {
     // ---- reusable pieces of the main UI
     val isLive = current?.kind == Kind.LIVE
     val resizeMode = RESIZES[resizeIdx].first
-
-    val categoryChips: @Composable (Boolean) -> Unit = { focusFirstChip ->
-        val kind = tab.kind()
-        if (kind != null) {
-            LazyRow(
-                Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                itemsIndexed(cats) { i, c ->
-                    Chip(
-                        (if (catLocked(kind, c)) "🔒 " else "") + catName(kind, c),
-                        selected = category?.id == c.id,
-                        modifier = if (i == 0 && focusFirstChip) Modifier.focusRequester(firstItem) else Modifier,
-                        onLongClick = { menuTarget = MenuTarget.CatT(kind, c) },
-                    ) { openCategory(kind, c) }
-                }
-            }
-        }
-    }
 
     val previewPane: @Composable ColumnScope.() -> Unit = {
         val e = current
@@ -834,6 +941,13 @@ private fun App() {
             .onPreviewKeyEvent { ev ->
                 if (!fullscreen || ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 infoTick++
+                if (panelOpen) {
+                    return@onPreviewKeyEvent when (ev.key) {
+                        Key.DirectionRight -> { if (panelMode == 1) panelMode = 0 else panelOpen = false; true }
+                        Key.DirectionLeft -> if (panelMode == 0) { panelMode = 1; true } else false
+                        else -> false // Up/Down/OK go to the focused row in the panel
+                    }
+                }
                 val digit = DIGITS.indexOf(ev.key).takeIf { it >= 0 } ?: PAD_DIGITS.indexOf(ev.key)
                 if (digit >= 0 && isLive) {
                     numBuffer = (numBuffer + digit).takeLast(5)
@@ -842,7 +956,7 @@ private fun App() {
                 when (ev.key) {
                     Key.DirectionUp, Key.ChannelUp -> if (isLive) { step(-1); true } else false
                     Key.DirectionDown, Key.ChannelDown -> if (isLive) { step(1); true } else false
-                    Key.DirectionLeft -> if (isLive) { lastChannel(); true } else {
+                    Key.DirectionLeft -> if (isLive) { openPanel(); true } else {
                         player.seekTo((player.currentPosition - 10_000).coerceAtLeast(0)); true
                     }
                     Key.DirectionRight -> if (!isLive) { player.seekTo(player.currentPosition + 10_000); true } else false
@@ -863,6 +977,44 @@ private fun App() {
                 onTogglePass = { showPass = !showPass }, onToggleMode = { useUrl = !useUrl },
                 onConnect = ::connect, onCancel = { showSetup = false },
             )
+        } else if (pickerOpen) {
+            val vod = provider?.supportsVod == true
+            val tabs = if (vod) listOf(Tab.LIVE, Tab.MOVIES, Tab.SERIES) else listOf(Tab.LIVE)
+            val kinds = if (vod) listOf(Kind.LIVE, Kind.MOVIE, Kind.SERIES) else listOf(Kind.LIVE)
+            val ix = pickerTab.coerceIn(0, tabs.lastIndex)
+            val pt = tabs[ix]
+            val pk = kinds[ix]
+            val pcats = catCache[pt].orEmpty().map { c ->
+                PickerCat(c, regionOf(c.name), counts[pk]?.get(c.id), catKey(pk, c.id) !in hiddenCats)
+            }
+            CategoryPicker(
+                tabLabels = tabs.map { t ->
+                    (if (t == Tab.LIVE) "Live" else if (t == Tab.MOVIES) "Movies" else "Series") + "  ·  " + (catCache[t]?.size ?: "…")
+                },
+                tab = ix, onTab = { pickerTab = it }, cats = pcats,
+                onToggle = { setHiddenMany(pk, listOf(it.cat.id), it.checked) },
+                onToggleRegion = { r, check -> setHiddenMany(pk, pcats.filter { c -> c.region == r }.map { c -> c.cat.id }, !check) },
+                onQuick = { which ->
+                    when (which) {
+                        0 -> setHiddenMany(pk, pcats.filter { isAdult(it.cat.name) }.map { it.cat.id }, true)
+                        1 -> setHiddenMany(pk, pcats.map { it.cat.id }, false)
+                        else -> setHiddenMany(pk, pcats.map { it.cat.id }, true)
+                    }
+                },
+                onDone = { store.setString("picked", "1"); pickerOpen = false; listVersion++ },
+                onSkip = { store.setString("picked", "1"); pickerOpen = false; listVersion++ },
+            )
+        } else if (appearanceOpen) {
+            AppearanceScreen(
+                accentIdx, bgIdx, cardIdx, textIdx, animIdx, startIdx,
+                onAccent = { accentIdx = it; store.setInt("accent", it); applyNow() },
+                onBg = { bgIdx = it; store.setInt("bg", it); applyNow() },
+                onCards = { cardIdx = it; store.setInt("cards", it); applyNow() },
+                onText = { textIdx = it; store.setInt("text", it); applyNow() },
+                onAnim = { animIdx = it; store.setInt("anim", it); applyNow() },
+                onStart = { startIdx = it; store.setInt("start", it) },
+                onClose = { appearanceOpen = false; listVersion++ },
+            )
         } else if (fullscreen && current != null) {
                 val e = current!!
                 PlayerSurface(player, false, resizeMode, Modifier.fillMaxSize().background(Color.Black))
@@ -877,8 +1029,23 @@ private fun App() {
                 }
                 FullscreenOverlay(
                     showInfo, e, titleFor(e), isLive, isFav(e), epg, now, position, duration,
-                    if (isLive) "Up/Down: channel  ·  Left: last channel  ·  digits: jump  ·  Menu: options"
+                    if (isLive) "Up/Down: channel  ·  Left: channel list  ·  digits: jump  ·  Menu: options"
                     else "Left/Right: seek 10s  ·  OK: pause  ·  Menu: options",
+                )
+                ChannelPanel(
+                    visible = panelOpen && isLive, mode = panelMode,
+                    title = if (panelMode == 0) (panelCat?.let { catName(Kind.LIVE, it) }?.ifBlank { null } ?: "Channels") else "Categories",
+                    channels = panelChannels.filter { visible(it) },
+                    categories = orderedCats(Tab.LIVE).filter { !catLocked(Kind.LIVE, it) }.map { it to catName(Kind.LIVE, it) },
+                    currentKey = current?.key(), currentCatId = panelCat?.id ?: current?.cat,
+                    lastChannel = if (liveHistory.size >= 2) liveHistory[liveHistory.size - 2] else null,
+                    now = now, nameOf = ::nameOf, isFav = ::isFav,
+                    programmesOf = { e -> guide?.cache?.get(e.id).orEmpty() },
+                    loadEpg = { e -> guide?.load(e) },
+                    focus = panelFocus,
+                    onChannel = { e -> current = e; panelOpen = false },
+                    onCategory = { c -> panelPick(c) },
+                    onLast = { lastChannel(); panelOpen = false },
                 )
         } else if (guideOpen && guide != null) {
                 GuideScreen(
@@ -903,19 +1070,17 @@ private fun App() {
                 }
         } else {
             Row(Modifier.fillMaxSize()) {
-                NavRail(
+                IconRail(
                     items = listOf(
-                        Triple("⌂", "Home", tab == Tab.HOME),
-                        Triple("●", "Live TV", tab == Tab.LIVE),
-                        Triple("▶", "Movies", tab == Tab.MOVIES),
-                        Triple("☰", "Series", tab == Tab.SERIES),
-                        Triple("★", "Favorites", tab == Tab.FAVORITES),
-                        Triple("▤", "TV Guide", false),
-                        Triple("⚙", "Settings", false),
+                        RailItem(RailIconType.HOME, "Home", tab == Tab.HOME),
+                        RailItem(RailIconType.LIVE, "Live TV", tab == Tab.LIVE),
+                        RailItem(RailIconType.MOVIES, "Movies", tab == Tab.MOVIES),
+                        RailItem(RailIconType.SERIES, "Series", tab == Tab.SERIES),
+                        RailItem(RailIconType.FAVORITES, "Favorites", tab == Tab.FAVORITES),
+                        RailItem(RailIconType.GUIDE, "Guide", false),
+                        RailItem(RailIconType.SETTINGS, "Settings", false),
                     ),
-                    footer = profiles.firstOrNull { it.id == activeProfile }?.name.orEmpty(),
-                    compact = !isTv,
-                    modifier = Modifier.width(if (isTv) 190.dp else 64.dp),
+                    modifier = Modifier.width(if (isTv) 84.dp else 66.dp),
                 ) { i ->
                     when (i) {
                         0 -> openTab(Tab.HOME)
@@ -966,18 +1131,31 @@ private fun App() {
                             }
                         }
 
-                        Tab.LIVE -> Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                            BrowseHeader("Live TV", query, { query = it }, "Search all channels") {
-                                if (guideChannels.isNotEmpty()) ActionButton("▤  Guide", primary = false) { guideOpen = true }
-                            }
-                            if (!searching) categoryChips(shownEntries.isEmpty())
-                            Text(
-                                if (busy) "Loading…" else status, color = Palette.muted,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                        Tab.LIVE -> Row(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            CategoryPanel(
+                                Modifier.width(if (isTv) 230.dp else 150.dp).fillMaxHeight(),
+                                catFilter, { catFilter = it }, regionTabs, catRegion, { catRegion = it },
+                                if (catRegion == "*all" && catFilter.isBlank()) panelRows.filter { it.pinned } else emptyList(),
+                                panelRows,
+                                "ALL  ·  ${panelRows.size} of ${cats.size}", category?.id,
+                                onSelect = { openCategory(Kind.LIVE, it.cat) },
+                                onMenu = { menuTarget = MenuTarget.CatT(Kind.LIVE, it.cat) },
+                                listState = catListState,
                             )
-                            Row(Modifier.fillMaxSize()) {
-                                LazyColumn(Modifier.weight(1.1f).fillMaxHeight(), state = liveState) {
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1.15f).fillMaxHeight()) {
+                                BrowseHeader(
+                                    category?.let { catName(Kind.LIVE, it) } ?: "Live TV", query, { query = it },
+                                    "Search all channels", searchWidth = 170.dp,
+                                ) {
+                                    if (guideChannels.isNotEmpty()) ActionButton("Guide", primary = false) { guideOpen = true }
+                                }
+                                Text(
+                                    if (busy) "Loading…" else status, color = Palette.muted,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp),
+                                )
+                                LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = liveState) {
                                     itemsIndexed(shownEntries) { i, e ->
                                         LaunchedEffect(e.id) { guide?.load(e) }
                                         val (cur, _) = nowNext(guide?.cache?.get(e.id).orEmpty(), now)
@@ -990,32 +1168,48 @@ private fun App() {
                                         ) { onEntry(e) }
                                     }
                                 }
-                                Spacer(Modifier.width(20.dp))
-                                Column(Modifier.weight(1f).fillMaxHeight()) { previewPane() }
                             }
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f).fillMaxHeight()) { previewPane() }
                         }
 
-                        Tab.MOVIES, Tab.SERIES -> Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                            BrowseHeader(if (tab == Tab.MOVIES) "Movies" else "Series", query, { query = it })
-                            categoryChips(shownEntries.isEmpty())
-                            if (provider?.supportsVod == false) {
-                                Text("Movies and series need an Xtream-style login (server, username, password).", color = Palette.muted)
-                            } else if (busy && shownEntries.isEmpty()) {
-                                Text("Loading…", color = Palette.muted)
-                            }
-                            LazyVerticalGrid(
-                                GridCells.Adaptive(140.dp), Modifier.fillMaxSize(),
-                                state = if (tab == Tab.MOVIES) moviesGrid else seriesGrid,
-                                contentPadding = PaddingValues(vertical = 16.dp, horizontal = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(22.dp),
-                            ) {
-                                itemsIndexed(shownEntries) { i, e ->
-                                    PosterCard(
-                                        nameOf(e), e.icon, "", isFav(e), progressOf(e),
-                                        if (i == 0) Modifier.focusRequester(firstItem) else Modifier, width = null,
-                                        onLongClick = { menuTarget = MenuTarget.EntryT(e) },
-                                    ) { onEntry(e) }
+                        Tab.MOVIES, Tab.SERIES -> Row(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            val kind = tab.kind() ?: Kind.MOVIE
+                            CategoryPanel(
+                                Modifier.width(if (isTv) 230.dp else 150.dp).fillMaxHeight(),
+                                catFilter, { catFilter = it }, regionTabs, catRegion, { catRegion = it },
+                                if (catRegion == "*all" && catFilter.isBlank()) panelRows.filter { it.pinned } else emptyList(),
+                                panelRows,
+                                "ALL  ·  ${panelRows.size} of ${cats.size}", category?.id,
+                                onSelect = { openCategory(kind, it.cat) },
+                                onMenu = { menuTarget = MenuTarget.CatT(kind, it.cat) },
+                                listState = catListState,
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f).fillMaxHeight()) {
+                                BrowseHeader(
+                                    category?.let { catName(kind, it) } ?: (if (tab == Tab.MOVIES) "Movies" else "Series"),
+                                    query, { query = it },
+                                )
+                                if (provider?.supportsVod == false) {
+                                    Text("Movies and series need an Xtream-style login (server, username, password).", color = Palette.muted)
+                                } else if (busy && shownEntries.isEmpty()) {
+                                    Text("Loading…", color = Palette.muted)
+                                }
+                                LazyVerticalGrid(
+                                    GridCells.Adaptive(Dimens.posterWidth), Modifier.fillMaxSize(),
+                                    state = if (tab == Tab.MOVIES) moviesGrid else seriesGrid,
+                                    contentPadding = PaddingValues(vertical = 14.dp, horizontal = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                                ) {
+                                    itemsIndexed(shownEntries) { i, e ->
+                                        PosterCard(
+                                            nameOf(e), e.icon, "", isFav(e), progressOf(e),
+                                            if (i == 0) Modifier.focusRequester(firstItem) else Modifier, width = null,
+                                            onLongClick = { menuTarget = MenuTarget.EntryT(e) },
+                                        ) { onEntry(e) }
+                                    }
                                 }
                             }
                         }
@@ -1027,7 +1221,7 @@ private fun App() {
                                 Text("Hold OK on any channel, movie or series to add it here.", Modifier.padding(top = 16.dp), color = Palette.muted)
                             }
                             LazyVerticalGrid(
-                                GridCells.Adaptive(230.dp), Modifier.fillMaxSize(),
+                                GridCells.Adaptive(Dimens.favWidth), Modifier.fillMaxSize(),
                                 state = favGrid,
                                 contentPadding = PaddingValues(vertical = 16.dp, horizontal = 8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
