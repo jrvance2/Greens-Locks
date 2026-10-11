@@ -5,3 +5,7 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+# The player loads the FFmpeg audio decoder by name at runtime, so shrinking must not remove it.
+-keep class androidx.media3.decoder.ffmpeg.** { *; }
+-keep class androidx.media3.decoder.** { *; }

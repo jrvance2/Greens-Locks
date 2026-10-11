@@ -361,14 +361,25 @@ private fun App() {
         if (audioMode != 0) {
             // 1 = tell the player the TV can take 5.1/7.1 and Dolby/DTS passthrough even if it reports stereo only;
             // 2 = decode everything to plain stereo on the device.
-            val caps = if (audioMode == 1) AudioCapabilities(
-                intArrayOf(
-                    AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_AC3, AudioFormat.ENCODING_E_AC3,
-                    AudioFormat.ENCODING_E_AC3_JOC, AudioFormat.ENCODING_DTS, AudioFormat.ENCODING_DTS_HD,
-                ),
-                8,
-            ) else AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES
+            val caps = when (audioMode) {
+                1 -> AudioCapabilities(
+                    intArrayOf(
+                        AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_AC3, AudioFormat.ENCODING_E_AC3,
+                        AudioFormat.ENCODING_E_AC3_JOC, AudioFormat.ENCODING_DTS, AudioFormat.ENCODING_DTS_HD,
+                    ),
+                    8,
+                )
+                // 3 = decode with the built-in FFmpeg decoder and send plain 5.1/7.1 PCM to the TV.
+                3 -> AudioCapabilities(intArrayOf(AudioFormat.ENCODING_PCM_16BIT), 8)
+                else -> AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES
+            }
             builder.setRenderersFactory(object : DefaultRenderersFactory(ctx) {
+                init {
+                    if (audioMode == 3) {
+                        setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+                        setEnableDecoderFallback(true)
+                    }
+                }
                 override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
                     DefaultAudioSink.Builder(context)
                         .setAudioCapabilities(caps)
@@ -448,7 +459,7 @@ private fun App() {
         if (c == current && player.isPlaying && ex.videoFormat != null && ex.audioFormat == null) {
             val hasAudioTracks = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }
             toast(
-                if (hasAudioTracks) "No sound: this stream's audio format isn't supported here. Try Settings → Audio output (Surround or Stereo)."
+                if (hasAudioTracks) "No sound: this stream's audio format isn't supported here. Try Settings → Audio output (Surround software decoder)."
                 else "This stream has no audio track."
             )
         }
@@ -1561,8 +1572,10 @@ private fun App() {
                 add(MenuItem("Up/Down in player: ${if (zapStrip) "channel strip" else "switch channel"}", close = false) {
                     zapStrip = !zapStrip; store.setFlag("zapStrip", zapStrip)
                 })
-                add(MenuItem("Audio output: ${listOf("Auto", "Surround (force 5.1)", "Stereo (compatible)")[audioMode]}", close = false) {
-                    audioMode = (audioMode + 1) % 3; store.setInt("audioMode", audioMode)
+                add(MenuItem("Audio output: ${mapOf(0 to "Auto", 1 to "Surround (passthrough)", 3 to "Surround (software decoder)", 2 to "Stereo (compatible)")[audioMode]}", close = false) {
+                    val order = listOf(0, 1, 3, 2)
+                    audioMode = order[(order.indexOf(audioMode).coerceAtLeast(0) + 1) % order.size]
+                    store.setInt("audioMode", audioMode)
                 })
                 add(MenuItem("Merge duplicate channels (HD/4K/backup): ${if (mergeDupes) "on" else "off"}", close = false) {
                     mergeDupes = !mergeDupes; store.setFlag("mergeDupes", mergeDupes)

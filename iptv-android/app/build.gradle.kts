@@ -8,7 +8,7 @@ val buildNumber = (project.findProperty("vc") as String?)?.toIntOrNull() ?: 2
 
 android {
     namespace = "com.greenslocks.iptv"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.greenslocks.iptv"
@@ -16,6 +16,8 @@ android {
         targetSdk = 34
         versionCode = buildNumber
         versionName = "1.2.$buildNumber"
+        // The software audio decoder ships native code; only the chips real TV boxes use.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     // CI supplies a stable signing key (so updates install over the old app); without one the
@@ -57,9 +59,11 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.activity:activity-compose:1.9.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
-    implementation("androidx.media3:media3-exoplayer:1.4.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
-    implementation("androidx.media3:media3-ui:1.4.1")
+    implementation("androidx.media3:media3-exoplayer:1.5.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.5.0")
+    implementation("androidx.media3:media3-ui:1.5.0"
+    // Software decoder for Dolby Digital / Digital+ / DTS and more, so 5.1 works even when the device decoder only gives stereo.
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("com.google.zxing:core:3.5.3")
