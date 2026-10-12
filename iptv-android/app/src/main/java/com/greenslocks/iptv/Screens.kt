@@ -13,6 +13,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.shadow
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -264,7 +271,7 @@ fun HeroBanner(
     val wash = tint ?: Palette.accent
     val animatedWash by androidx.compose.animation.animateColorAsState(wash, label = "heroWash")
     Box(
-        Modifier.fillMaxWidth().height(260.dp)
+        Modifier.fillMaxWidth().height(300.dp)
             .background(Brush.horizontalGradient(listOf(animatedWash.copy(alpha = 0.40f), animatedWash.copy(alpha = 0.16f), Palette.bg)))
     ) {
         androidx.compose.animation.Crossfade(
@@ -273,7 +280,12 @@ fun HeroBanner(
             label = "heroArt",
         ) { (url, show, plain) ->
             if (show) Box(Modifier.fillMaxSize()) {
-                Artwork(url, "", Modifier.fillMaxSize().alpha(if (plain) 0.18f else 0.5f), alignment = Alignment.TopCenter)
+                val kb = rememberInfiniteTransition(label = "kenburns")
+                val zoom by kb.animateFloat(
+                    1f, if (Dimens.animLevel == 0) 1.07f else 1f,
+                    infiniteRepeatable(tween(22_000, easing = LinearEasing), RepeatMode.Reverse), label = "zoom",
+                )
+                Artwork(url, "", Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom }.alpha(if (plain) 0.18f else 0.5f), alignment = Alignment.TopCenter)
                 Box(
                     Modifier.fillMaxSize().background(
                         Brush.horizontalGradient(listOf(Palette.bg.copy(alpha = 0.92f), Palette.bg.copy(alpha = 0.55f), Color.Transparent))
@@ -281,6 +293,7 @@ fun HeroBanner(
                 )
             }
         }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.62f to Color.Transparent, 1f to Palette.bg)))
         Row(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(label.uppercase(), color = Palette.accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
@@ -298,7 +311,8 @@ fun HeroBanner(
             Artwork(
                 entry.icon, title,
                 Modifier.fillMaxHeight().aspectRatio(if (entry.kind == Kind.LIVE) 1.6f else 2f / 3f)
-                    .clip(RoundedCornerShape(14.dp)),
+                    .shadow(18.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(14.dp)),
                 if (entry.kind == Kind.LIVE) ContentScale.Fit else ContentScale.Crop,
             )
         }
@@ -344,11 +358,13 @@ fun DetailScreen(
                     Brush.horizontalGradient(listOf(Palette.bg.copy(alpha = 0.97f), Palette.bg.copy(alpha = 0.6f), Color.Transparent))
                 )
             )
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Palette.bg.copy(alpha = 0.9f))))
         }
         Row(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 28.dp)) {
             Artwork(
                 poster, name,
-                Modifier.width(210.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)),
+                Modifier.width(210.dp).aspectRatio(2f / 3f).shadow(24.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(14.dp)),
             )
             Spacer(Modifier.width(32.dp))
             Column(Modifier.weight(1f)) {
@@ -357,13 +373,11 @@ fun DetailScreen(
                     Text("Loading details…", color = Palette.muted, modifier = Modifier.padding(top = 6.dp))
                 } else {
                     if (detail.tagline.isNotBlank()) Text(detail.tagline, color = Palette.muted, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, modifier = Modifier.padding(top = 4.dp))
-                    if (detail.meta.isNotBlank()) Text(detail.meta, color = Palette.accent, modifier = Modifier.padding(top = 6.dp))
+                    MetaChips(detail.meta, entry.title, Modifier.padding(top = 8.dp))
                     if (detail.plot.isNotBlank()) {
                         Text(detail.plot, maxLines = 5, overflow = TextOverflow.Ellipsis, color = Palette.text.copy(alpha = 0.85f), modifier = Modifier.padding(top = 10.dp))
                     }
-                    if (detail.cast.isNotEmpty()) {
-                        Text("Cast: " + detail.cast.take(8).joinToString(", "), maxLines = 2, overflow = TextOverflow.Ellipsis, color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-                    }
+                    CastRow(detail.cast, Modifier.padding(top = 12.dp))
                 }
                 Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (entry.kind == Kind.MOVIE) {
@@ -480,11 +494,16 @@ fun BoxScope.FullscreenOverlay(
         }
         return
     }
-    AnimatedVisibility(visible, Modifier.align(Alignment.BottomStart)) {
+    AnimatedVisibility(
+        visible, Modifier.align(Alignment.BottomStart),
+        enter = androidx.compose.animation.fadeIn(tween(Motion.MED)) + androidx.compose.animation.slideInVertically(tween(Motion.SLOW, easing = Motion.ease)) { it / 4 },
+        exit = androidx.compose.animation.fadeOut(tween(Motion.MED)) + androidx.compose.animation.slideOutVertically(tween(Motion.MED)) { it / 4 },
+    ) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 28.dp)
                 .clip(RoundedCornerShape(22.dp))
-                .background(Color.Black.copy(alpha = 0.78f))
+                .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.58f), Color.Black.copy(alpha = 0.86f))))
+                .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(22.dp))
                 .padding(horizontal = 28.dp, vertical = 20.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -526,7 +545,7 @@ fun BoxScope.FullscreenOverlay(
                 }
             }
             if (!isLive && duration > 0) {
-                ProgressLine(position.toFloat() / duration, Modifier.fillMaxWidth().padding(top = 14.dp))
+                ProgressLine(position.toFloat() / duration, Modifier.fillMaxWidth().padding(top = 14.dp), knob = true)
                 Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(fmtTime(position), color = Palette.muted, style = MaterialTheme.typography.bodySmall)
                     Text(fmtTime(duration), color = Palette.muted, style = MaterialTheme.typography.bodySmall)

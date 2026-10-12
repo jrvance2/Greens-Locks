@@ -176,17 +176,21 @@ private fun PlayerSurface(
     player: ExoPlayer, showController: Boolean, resizeMode: Int, modifier: Modifier, subScale: Float = 1f,
 ) {
     AndroidView(
-        factory = { PlayerView(it) },
+        factory = { PlayerView(it).apply { setKeepContentOnPlayerReset(true) } },
         update = {
             if (it.player !== player) it.player = player
             it.useController = showController
             it.resizeMode = resizeMode
+            it.setKeepContentOnPlayerReset(Dimens.keepFrame)
             it.subtitleView?.apply {
                 setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * subScale)
                 setStyle(
                     CaptionStyleCompat(
-                        android.graphics.Color.WHITE, 0x99000000.toInt(), android.graphics.Color.TRANSPARENT,
-                        CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null,
+                        intArrayOf(android.graphics.Color.WHITE, 0xFFFFE066.toInt(), 0xFF7DE8FF.toInt())[Dimens.subColor],
+                        intArrayOf(android.graphics.Color.TRANSPARENT, 0x99000000.toInt(), 0xFF000000.toInt())[Dimens.subBg],
+                        android.graphics.Color.TRANSPARENT,
+                        intArrayOf(CaptionStyleCompat.EDGE_TYPE_NONE, CaptionStyleCompat.EDGE_TYPE_OUTLINE, CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW)[Dimens.subEdge],
+                        android.graphics.Color.BLACK, null,
                     )
                 )
             }
@@ -209,6 +213,7 @@ private fun App() {
     // ---- connection / browsing state
     var profiles by remember { mutableStateOf(store.profiles()) }
     var activeProfile by remember { mutableIntStateOf(store.active) }
+    var showWho by remember { mutableStateOf(Dimens.askProfile && store.profiles().size > 1) }
     var urlText by remember { mutableStateOf(store.url()) }
     val initial = remember { xtreamFromUrl(urlText) }
     var server by remember { mutableStateOf(initial?.base.orEmpty()) }
@@ -1740,6 +1745,17 @@ private fun App() {
                     onPick = { i -> resizeIdx = i; store.setInt("resize", i); layoutTick++ }),
                 SettingItem("Subtitle size", SUB_NAMES[subSize], null,
                     choices = SUB_NAMES, selected = subSize, onPick = { i -> subSize = i; store.setInt("subSize", i); layoutTick++ }),
+                SettingItem("Subtitle background", SUB_BG_NAMES[Dimens.subBg], null,
+                    choices = SUB_BG_NAMES, selected = Dimens.subBg, onPick = { i -> setLayout("subBg", i) }),
+                SettingItem("Subtitle edge", SUB_EDGE_NAMES[Dimens.subEdge], null,
+                    choices = SUB_EDGE_NAMES, selected = Dimens.subEdge, onPick = { i -> setLayout("subEdge", i) }),
+                SettingItem("Subtitle color", SUB_COLOR_NAMES[Dimens.subColor], null,
+                    choices = SUB_COLOR_NAMES, selected = Dimens.subColor, onPick = { i -> setLayout("subColor", i) }),
+                SettingItem("Skip back", "${Dimens.skipBack}s", "Left on movies and series; rewind key skips 3x this",
+                    choices = SKIP_SECS.map { "$it seconds" }, selected = SKIP_SECS.indexOf(Dimens.skipBack).coerceAtLeast(0), onPick = { i -> setLayout("skipBack", i) }),
+                SettingItem("Skip forward", "${Dimens.skipFwd}s", "Right on movies and series; fast-forward key skips 3x this",
+                    choices = SKIP_SECS.map { "$it seconds" }, selected = SKIP_SECS.indexOf(Dimens.skipFwd).coerceAtLeast(0), onPick = { i -> setLayout("skipFwd", i) }),
+                toggle("Keep picture while changing", "Hold the last frame until the new stream appears instead of going black", Dimens.keepFrame) { setLayoutFlag("keepFrame", !Dimens.keepFrame) },
                 SettingItem("Live stream format", if (liveTs) "TS" else "HLS (m3u8)", "Switch if a provider streams better one way",
                     choices = listOf("HLS (m3u8)", "TS"), selected = if (liveTs) 1 else 0, onPick = { i -> liveTs = i == 1; store.setFlag("liveTs", liveTs); layoutTick++ }),
                 SettingItem("Network identity", Net.UA_NAMES[uaMode], "Try VLC or TiviMate if a provider blocks or throttles streams",
@@ -1773,6 +1789,7 @@ private fun App() {
                 SettingItem("Multiview", "${multiList.size}/4", "Watch up to four channels at once", closes = true, action = { loadAccount(); player.pause(); multiOpen = true }),
             )),
             SettingSection("Profiles & parental", "Profiles, Kids mode and PIN.", buildList {
+                add(toggle("Ask who's watching", "Show a profile picker when the app opens (when there is more than one profile)", Dimens.askProfile) { setLayoutFlag("askProfile", !Dimens.askProfile) })
                 profiles.forEach { pr ->
                     add(SettingItem(pr.name, if (pr.id == activeProfile) "Active" else "Switch", if (store.isKids(pr.id)) "Kids profile" else null,
                         action = { if (pr.id != activeProfile) { showSettings = false; switchProfile(pr.id) } }))
@@ -1843,6 +1860,8 @@ private fun App() {
             SettingSection("About", "Version and updates.", listOf(
                 SettingItem("Vance TV", BuildConfig.VERSION_NAME, "Version of this app", enabled = false),
                 SettingItem("Check for updates", null, "Install the newest version from GitHub", action = { updateOpen = true; checkUpdates(false) }),
+                SettingItem("This device", android.os.Build.MODEL, "Android ${android.os.Build.VERSION.RELEASE}", enabled = false),
+                SettingItem("Built with", null, "Media3 (playback), OkHttp (network), Coil (images), Jetpack Compose, FFmpeg decoder (jellyfin), Inter typeface. Movie data from TMDB.", enabled = false),
             )),
         )
     }
@@ -1950,8 +1969,9 @@ private fun App() {
         delay(350)
         focusedHome = p
     }
-    val showSplash = !bootDone && urlText.isNotBlank() && provider == null
+    val showSplash = !bootDone && urlText.isNotBlank() && provider == null && !showWho
     val screenId = when {
+        showWho -> 14
         showSplash -> 0
         provider == null || showSetup -> 1
         showSettings -> 12
@@ -2031,20 +2051,20 @@ private fun App() {
                         true
                     } else false
                     Key.DirectionLeft -> if (isLive) { openPanel(); true } else {
-                        player.seekTo((player.currentPosition - 10_000).coerceAtLeast(0)); true
+                        player.seekTo((player.currentPosition - Dimens.skipBack * 1000L).coerceAtLeast(0)); true
                     }
-                    Key.DirectionRight -> if (!isLive) { player.seekTo(player.currentPosition + 10_000); true } else { trackPanelOpen = true; true }
+                    Key.DirectionRight -> if (!isLive) { player.seekTo(player.currentPosition + Dimens.skipFwd * 1000L); true } else { trackPanelOpen = true; true }
                     Key.Captions, Key.MediaAudioTrack -> { trackPanelOpen = true; true }
                     Key.DirectionCenter, Key.Enter, Key.MediaPlayPause -> {
                         if (player.isPlaying) player.pause() else player.play(); true
                     }
                     Key.MediaRewind -> {
                         if (isLive && !player.isCurrentMediaItemSeekable) toast("This stream can't be rewound")
-                        else player.seekTo((player.currentPosition - if (isLive) 15_000 else 30_000).coerceAtLeast(0))
+                        else player.seekTo((player.currentPosition - if (isLive) 15_000 else Dimens.skipBack * 3000L).coerceAtLeast(0))
                         true
                     }
                     Key.MediaFastForward -> {
-                        if (isLive) player.seekToDefaultPosition() else player.seekTo(player.currentPosition + 30_000)
+                        if (isLive) player.seekToDefaultPosition() else player.seekTo(player.currentPosition + Dimens.skipFwd * 3000L)
                         true
                     }
                     Key.Menu -> { showOptions = true; true }
@@ -2053,7 +2073,12 @@ private fun App() {
             }
             .then(if (fullscreen) Modifier.focusRequester(rootFocus).focusable() else Modifier)
     ) {
-        if (showSplash) {
+        if (showWho) {
+            ProfilePicker(profiles, store::isKids, activeProfile) { pr ->
+                showWho = false
+                if (pr.id != activeProfile) switchProfile(pr.id)
+            }
+        } else if (showSplash) {
             SplashScreen()
         } else if (showSettings && provider != null && !showSetup) {
             SettingsScreen(settingSections) { showSettings = false; listVersion++ }
@@ -2251,6 +2276,12 @@ private fun App() {
                             val hero = focusedHome ?: baseHero
                             val shelves = buildList {
                                 if (cont.isNotEmpty()) add(Triple("Continue watching", cont, true))
+                                val seed = cont.firstOrNull { it.kind == Kind.MOVIE || it.kind == Kind.SERIES || it.kind == Kind.EPISODE }
+                                if (seed != null && seed.cat.isNotBlank()) {
+                                    val seen = cont.map { it.key() }.toSet()
+                                    val like = homeShelves.flatMap { it.items }.filter { it.cat == seed.cat && it.kind != Kind.LIVE && it.key() !in seen && visible(it) }.distinctBy { it.key() }.take(20)
+                                    if (like.size >= 4) add(Triple("Because you watched ${if (seed.parent.isNotBlank()) seed.parent else seed.title}", like, false))
+                                }
                                 if (favs.isNotEmpty()) add(Triple("Favorites", favs, true))
                                 val mine = myList.mapNotNull(::decodeEntry).filter { visible(it) }.take(20)
                                 if (mine.isNotEmpty()) add(Triple("My list", mine, false))
@@ -2306,7 +2337,7 @@ private fun App() {
                                     )
                                 }
                                 if (hero == null && shelves.isEmpty()) item {
-                                    if (busy) Column(Modifier.padding(24.dp)) { repeat(3) { SkeletonRow() } }
+                                    if (busy) Column { repeat(2) { SkeletonShelf() } }
                                     else EmptyState("Nothing here yet", "Open Live TV, Movies or Series to start watching.", "Open Live TV") { openTab(Tab.LIVE) }
                                 }
                             }

@@ -68,12 +68,21 @@ fun SettingsScreen(sections: List<SettingSection>, onClose: () -> Unit) {
     val first = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     LaunchedEffect(Unit) { repeat(15) { delay(80); if (runCatching { first.requestFocus() }.isSuccess) return@LaunchedEffect } }
-    val section = sections.getOrNull(sel.coerceIn(0, (sections.size - 1).coerceAtLeast(0)))
+    var q by remember { mutableStateOf("") }
+    val picked = sections.getOrNull(sel.coerceIn(0, (sections.size - 1).coerceAtLeast(0)))
+    val section = if (q.isBlank()) picked else {
+        val hits = sections.flatMap { sec ->
+            sec.items.filter { it.title.contains(q, true) || it.desc.orEmpty().contains(q, true) || it.value.orEmpty().contains(q, true) }
+                .map { it.copy(desc = listOfNotNull(sec.title, it.desc).joinToString("  \u00B7  ")) }
+        }
+        SettingSection("Search", if (hits.isEmpty()) "Nothing matches \u201C$q\u201D." else "${hits.size} results for \u201C$q\u201D", hits)
+    }
 
     Row(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(accentWash(0.16f), Palette.bg)))) {
         Column(Modifier.width(300.dp).fillMaxHeight().background(Palette.surface).padding(horizontal = 16.dp, vertical = 22.dp)) {
             BrandWordmark(16.sp, Modifier.padding(start = 6.dp, bottom = 10.dp))
             Text("Settings", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 6.dp, bottom = 14.dp))
+            TvTextField(q, { q = it }, "Search settings", Modifier.fillMaxWidth().padding(bottom = 10.dp))
             sections.forEachIndexed { i, s ->
                 FocusCard(
                     Modifier.fillMaxWidth().padding(vertical = 2.dp).then(if (i == 0) Modifier.focusRequester(first) else Modifier),

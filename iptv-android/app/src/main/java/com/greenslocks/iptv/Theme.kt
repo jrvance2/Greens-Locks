@@ -63,6 +63,13 @@ object Dimens {
     var homeChips by mutableStateOf(true)
     var glow by mutableStateOf(true)
     var heroTint by mutableStateOf(true)
+    var subBg by mutableIntStateOf(1)
+    var subEdge by mutableIntStateOf(1)
+    var subColor by mutableIntStateOf(0)
+    var skipBack by mutableIntStateOf(10)
+    var skipFwd by mutableIntStateOf(10)
+    var keepFrame by mutableStateOf(true)
+    var askProfile by mutableStateOf(true)
     /** 0 = full animations, 1 = reduced, 2 = off. */
     var animLevel by mutableIntStateOf(0)
 

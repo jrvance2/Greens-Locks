@@ -2,6 +2,8 @@ package com.greenslocks.iptv
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -72,8 +74,12 @@ fun FocusCard(
     val grows = scaleOnFocus != 1f && level != 2
     val target = if (level == 1) 1f + (scaleOnFocus - 1f) * 0.4f else scaleOnFocus
     val scale by animateFloatAsState(
-        if (focused && grows) target else 1f, tween(if (level == 1) 60 else Motion.FAST, easing = Motion.ease), label = "focusScale",
+        if (focused && grows) target else 1f,
+        if (level == 0) spring(dampingRatio = 0.62f, stiffness = 420f) else tween(if (level == 1) 60 else Motion.FAST, easing = Motion.ease),
+        label = "focusScale",
     )
+    val glowOn = level == 0 && scaleOnFocus != 1f && Dimens.glow
+    val glowDp by animateDpAsState(if (focused && glowOn) 18.dp else 0.dp, tween(Motion.MED, easing = Motion.ease), label = "glow")
     Box(
         modifier
             .then(
@@ -81,8 +87,8 @@ fun FocusCard(
                 else Modifier
             )
             .then(
-                if (focused && level == 0 && scaleOnFocus != 1f && Dimens.glow)
-                    Modifier.shadow(16.dp, shape, clip = false, ambientColor = Palette.accent, spotColor = Palette.accent)
+                if (glowDp > 0.5.dp)
+                    Modifier.shadow(glowDp, shape, clip = false, ambientColor = Palette.accent, spotColor = Palette.accent)
                 else Modifier
             )
             // Only draw the ring while focused: a 0.dp border still paints a hairline.
@@ -148,32 +154,64 @@ suspend fun dominantColor(ctx: Context, url: String): Color? = runCatching {
     Color(px)
 }.getOrNull()
 
+/** A soft light sweeping across placeholder shapes while content loads. */
+@Composable
+fun shimmerBrush(): Brush {
+    val t = rememberInfiniteTransition(label = "shimmer")
+    val x by t.animateFloat(-400f, 1400f, infiniteRepeatable(tween(1300, easing = androidx.compose.animation.core.LinearEasing)), label = "x")
+    return Brush.linearGradient(
+        listOf(Palette.surfaceHi.copy(alpha = 0.55f), Palette.surfaceHi.copy(alpha = 1f), Palette.surfaceHi.copy(alpha = 0.55f)),
+        start = Offset(x, 0f), end = Offset(x + 400f, 200f),
+    )
+}
+
 @Composable
 fun SkeletonRow(modifier: Modifier = Modifier) {
-    val t = rememberInfiniteTransition(label = "skeleton")
-    val a by t.animateFloat(0.25f, 0.55f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "alpha")
+    val sh = shimmerBrush()
     Row(modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(10.dp)).background(Palette.surface).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(width = 80.dp, height = 54.dp).clip(RoundedCornerShape(6.dp)).background(Palette.surfaceHi.copy(alpha = a)))
+        Box(Modifier.size(width = 80.dp, height = 54.dp).clip(RoundedCornerShape(6.dp)).background(sh))
         Spacer(Modifier.width(12.dp))
         Column {
-            Box(Modifier.width(220.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(Palette.surfaceHi.copy(alpha = a)))
+            Box(Modifier.width(220.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(sh))
             Spacer(Modifier.height(8.dp))
-            Box(Modifier.width(150.dp).height(10.dp).clip(RoundedCornerShape(4.dp)).background(Palette.surfaceHi.copy(alpha = a * 0.8f)))
+            Box(Modifier.width(150.dp).height(10.dp).clip(RoundedCornerShape(4.dp)).background(sh))
+        }
+    }
+}
+
+/** Placeholder shelf shown on Home while the library loads. */
+@Composable
+fun SkeletonShelf(modifier: Modifier = Modifier) {
+    val sh = shimmerBrush()
+    Column(modifier) {
+        Box(Modifier.padding(start = 24.dp, top = 20.dp).size(width = 180.dp, height = 18.dp).clip(RoundedCornerShape(5.dp)).background(sh))
+        Row(Modifier.padding(horizontal = 24.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            repeat(7) { Box(Modifier.width(Dimens.posterWidth).aspectRatio(2f / 3f).clip(RoundedCornerShape(Dimens.corner)).background(sh)) }
         }
     }
 }
 
 @Composable
-fun ProgressLine(fraction: Float, modifier: Modifier = Modifier) {
-    Box(modifier.height(4.dp).background(Color.Black.copy(alpha = 0.5f))) {
-        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).fillMaxHeight().background(Palette.accent))
+fun ProgressLine(fraction: Float, modifier: Modifier = Modifier, knob: Boolean = false) {
+    val f = fraction.coerceIn(0f, 1f)
+    Box(modifier.height(if (knob) 8.dp else 4.dp), contentAlignment = Alignment.CenterStart) {
+        Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.22f))) {
+            Box(
+                Modifier.fillMaxWidth(f).fillMaxHeight()
+                    .background(Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2)))
+            )
+        }
+        if (knob) BoxWithConstraints(Modifier.fillMaxWidth()) {
+            Box(Modifier.offset(x = (maxWidth - 8.dp) * f).size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color.White))
+        }
     }
 }
 
 @Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) {
+fun SectionTitle(text: String, modifier: Modifier = Modifier, active: Boolean = true) {
+    val a by animateFloatAsState(if (active) 1f else 0.55f, tween(Motion.MED), label = "titleDim")
     Text(
-        text, modifier.padding(start = 24.dp, top = 16.dp),
+        text, modifier.padding(start = 24.dp, top = 16.dp).graphicsLayer { alpha = a },
         style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
     )
 }
@@ -195,6 +233,7 @@ fun PosterCard(
     Column(if (width != null) Modifier.width(width) else Modifier.fillMaxWidth()) {
         FocusCard(modifier.fillMaxWidth().aspectRatio(2f / 3f), onLongClick = onLongClick, onFocus = onFocus, onClick = onClick) {
             Artwork(icon, title, Modifier.fillMaxSize(), fit)
+            Box(Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(Dimens.corner)))
             if (favorite) {
                 Text("★", Modifier.align(Alignment.TopEnd).padding(6.dp), color = Palette.accent)
             }
@@ -243,6 +282,7 @@ fun WideCard(
                 Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Palette.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
+        Box(Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(Dimens.corner)))
         if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomStart).fillMaxWidth())
     }
 }
@@ -261,8 +301,9 @@ fun ShelfRow(
     firstFocus: Modifier = Modifier,
     onFocusEntry: (Entry) -> Unit = {},
 ) {
-    Column {
-        SectionTitle(title)
+    var rowActive by remember { mutableStateOf(false) }
+    Column(Modifier.onFocusChanged { rowActive = it.hasFocus }) {
+        SectionTitle(title, active = rowActive)
         LazyRow(
             contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
