@@ -32,6 +32,8 @@ interface Provider {
     var liveFormat: String
     /** Added to every programme time, for providers whose guide is in the wrong time zone. */
     var epgOffsetMs: Long
+    /** Extra guide shift for single channels (stream id -> milliseconds), on top of [epgOffsetMs]. */
+    var channelShiftMs: Map<String, Long>
     suspend fun account(): AccountInfo?
     /** Programmes around now, including past ones that may be available for catch-up. */
     suspend fun guideEpg(entry: Entry, pastMs: Long, futureMs: Long): List<Programme>
@@ -60,6 +62,7 @@ class XtreamProvider(
     override val supportsVod = true
     override var liveFormat: String = "m3u8"
     override var epgOffsetMs: Long = 0L
+    override var channelShiftMs: Map<String, Long> = emptyMap()
     private var timezone: String = ""
 
     private fun api(action: String? = null, extra: String = ""): String =
@@ -109,6 +112,7 @@ class XtreamProvider(
                 num = o.optInt("num"), cat = category.id,
                 added = o.optString("added").toLongOrNull() ?: 0L,
                 rating = o.optString("rating").toFloatOrNull() ?: o.optString("rating_5based").toFloatOrNull() ?: 0f,
+                epgId = o.optString("epg_channel_id").takeUnless { it == "null" }.orEmpty(),
             )
         }
     }
@@ -119,7 +123,7 @@ class XtreamProvider(
             val out = ArrayList<Entry>()
             r.beginArray()
             while (r.hasNext()) {
-                var id = ""; var name = ""; var icon = ""; var num = 0; var cat = ""
+                var id = ""; var name = ""; var icon = ""; var num = 0; var cat = ""; var epgId = ""
                 r.beginObject()
                 while (r.hasNext()) {
                     when (r.nextName()) {
@@ -128,11 +132,12 @@ class XtreamProvider(
                         "stream_icon" -> icon = r.str()
                         "num" -> num = r.str().toIntOrNull() ?: 0
                         "category_id" -> cat = r.str()
+                        "epg_channel_id" -> epgId = r.str()
                         else -> r.skipValue()
                     }
                 }
                 r.endObject()
-                out += Entry(Kind.LIVE, id, name, icon = icon, num = num, cat = cat)
+                out += Entry(Kind.LIVE, id, name, icon = icon, num = num, cat = cat, epgId = epgId)
             }
             r.endArray()
             out
@@ -208,11 +213,11 @@ class XtreamProvider(
         return out
     }
 
-    private fun parseProgramme(o: JSONObject): Programme {
+    private fun parseProgramme(o: JSONObject, shift: Long = epgOffsetMs): Programme {
         val raw = o.optString("title")
         val title = runCatching { String(Base64.decode(raw, Base64.DEFAULT), Charsets.UTF_8) }.getOrDefault(raw)
         return Programme(
-            title, o.optLong("start_timestamp") * 1000 + epgOffsetMs, o.optLong("stop_timestamp") * 1000 + epgOffsetMs,
+            title, o.optLong("start_timestamp") * 1000 + shift, o.optLong("stop_timestamp") * 1000 + shift,
             archive = o.optInt("has_archive") == 1,
         )
     }
@@ -220,7 +225,8 @@ class XtreamProvider(
     override suspend fun epg(entry: Entry, limit: Int): List<Programme> {
         val arr = JSONObject(fetch(api("get_short_epg", "&stream_id=${enc(entry.id)}&limit=$limit")))
             .optJSONArray("epg_listings") ?: return emptyList()
-        return List(arr.length()) { i -> parseProgramme(arr.getJSONObject(i)) }.filter { it.stop > 0 }
+        val shift = epgOffsetMs + (channelShiftMs[entry.id] ?: 0L)
+        return List(arr.length()) { i -> parseProgramme(arr.getJSONObject(i), shift) }.filter { it.stop > 0 }
     }
 
     override suspend fun guideEpg(entry: Entry, pastMs: Long, futureMs: Long): List<Programme> {
@@ -228,7 +234,8 @@ class XtreamProvider(
         val full = runCatching {
             val arr = JSONObject(fetch(api("get_simple_data_table", "&stream_id=${enc(entry.id)}")))
                 .optJSONArray("epg_listings")
-            if (arr == null) emptyList() else List(arr.length()) { i -> parseProgramme(arr.getJSONObject(i)) }
+            val shift = epgOffsetMs + (channelShiftMs[entry.id] ?: 0L)
+            if (arr == null) emptyList() else List(arr.length()) { i -> parseProgramme(arr.getJSONObject(i), shift) }
         }.getOrDefault(emptyList())
         val inWindow = full.filter { it.stop > now - pastMs && it.start < now + futureMs && it.stop > 0 }
         return if (inWindow.isNotEmpty()) inWindow else runCatching { epg(entry, 10) }.getOrDefault(emptyList())
@@ -306,12 +313,13 @@ class M3uProvider(private val channels: List<Channel>) : Provider {
     override val supportsVod = false
     override var liveFormat: String = "m3u8"
     override var epgOffsetMs: Long = 0L
+    override var channelShiftMs: Map<String, Long> = emptyMap()
     override suspend fun account(): AccountInfo? = null
     override suspend fun guideEpg(entry: Entry, pastMs: Long, futureMs: Long): List<Programme> = emptyList()
     override suspend fun nextEpisode(current: Entry): Entry? = null
     override suspend fun indexAll(kind: Kind, sink: (Entry) -> Unit) {
         if (kind != Kind.LIVE) return
-        channels.forEachIndexed { i, c -> sink(Entry(Kind.LIVE, c.url, c.name, icon = c.logo, num = i + 1, cat = c.group)) }
+        channels.forEachIndexed { i, c -> sink(Entry(Kind.LIVE, c.url, c.name, icon = c.logo, num = i + 1, cat = c.group, epgId = c.tvgId)) }
     }
 
     override suspend fun categories(kind: Kind): List<Category> =
@@ -319,11 +327,11 @@ class M3uProvider(private val channels: List<Channel>) : Provider {
         else emptyList()
 
     override suspend fun entries(kind: Kind, category: Category): List<Entry> =
-        if (kind == Kind.LIVE) channels.filter { it.group == category.id }.map { Entry(Kind.LIVE, it.url, it.name, icon = it.logo, cat = it.group) }
+        if (kind == Kind.LIVE) channels.filter { it.group == category.id }.map { Entry(Kind.LIVE, it.url, it.name, icon = it.logo, cat = it.group, epgId = it.tvgId) }
         else emptyList()
 
     override suspend fun allLive(): List<Entry> =
-        channels.mapIndexed { i, c -> Entry(Kind.LIVE, c.url, c.name, icon = c.logo, num = i + 1, cat = c.group) }
+        channels.mapIndexed { i, c -> Entry(Kind.LIVE, c.url, c.name, icon = c.logo, num = i + 1, cat = c.group, epgId = c.tvgId) }
 
     override suspend fun detail(entry: Entry): Detail? = null
     override suspend fun counts(kind: Kind): Map<String, Int> =

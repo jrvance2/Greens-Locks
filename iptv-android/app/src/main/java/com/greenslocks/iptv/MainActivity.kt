@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
         val store = Store(getSharedPreferences("iptv", MODE_PRIVATE))
         intent.getStringExtra("playlist_url")?.let { store.setUrl(it) }
         intent.getStringExtra("tmdb_key")?.let { store.setGString("tmdbKey", it) }
+        intent.getStringExtra("xmltv_url")?.let { store.setString("xmltvUrl", it); store.setString("xmltvAt", "0") }
         applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0), store.int("ui", 1))
         LayoutPrefs.load(store)
         Net.setMode(store.int("uaMode", 0))
@@ -149,6 +150,10 @@ private val RESIZES = listOf(
     AspectRatioFrameLayout.RESIZE_MODE_ZOOM to "Zoom",
     AspectRatioFrameLayout.RESIZE_MODE_FILL to "Stretch",
 )
+private val LANG_NAMES = listOf("Stream default", "English", "Spanish", "French", "German", "Portuguese", "Italian", "Arabic", "Hindi", "Russian", "Turkish", "Polish")
+private val LANG_CODES = listOf<String?>(null, "en", "es", "fr", "de", "pt", "it", "ar", "hi", "ru", "tr", "pl")
+private val PAD_START = listOf(0, 1, 2, 5)
+private val PAD_END = listOf(0, 2, 5, 10, 15)
 private val BUFFERS = listOf("Low", "Normal", "High")
 private val SORT_NAMES = listOf("Default", "A–Z", "Newest", "Top rated")
 private val SUB_NAMES = listOf("Small", "Medium", "Large")
@@ -264,6 +269,16 @@ private fun App() {
     var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
     var uaMode by remember { mutableIntStateOf(store.int("uaMode", 0)) }
     var audioMode by remember { mutableIntStateOf(store.int("audioMode", if (store.flag("pcmAudio", false)) 2 else 0)) }
+    var xmltvUrl by remember { mutableStateOf(store.string("xmltvUrl").orEmpty()) }
+    var xmltvFirst by remember { mutableStateOf(store.flag("xmltvFirst", false)) }
+    var xmltvTick by remember { mutableIntStateOf(0) }
+    var xmltvBusy by remember { mutableStateOf(false) }
+    val xmltv = remember(activeProfile) { XmltvStore(ctx, activeProfile) }
+    var chShifts by remember { mutableStateOf(store.map("chShift")) }
+    var seriesRules by remember { mutableStateOf(store.list("seriesRules")) }
+    var seriesOpen by remember { mutableStateOf(false) }
+    var audioLang by remember { mutableIntStateOf(store.int("audioLang", 0)) }
+    var subLang by remember { mutableIntStateOf(store.int("subLang", 0)) }
     var layoutTick by remember { mutableIntStateOf(0) }
     var trackPanelOpen by remember { mutableStateOf(false) }
     var trackTick by remember { mutableIntStateOf(0) }
@@ -490,6 +505,30 @@ private fun App() {
             )
         }
     }
+    fun refreshXmltv(verbose: Boolean) {
+        if (xmltvUrl.isBlank() || xmltvBusy) return
+        scope.launch {
+            xmltvBusy = true
+            val msg = runCatching { xmltv.refresh(xmltvUrl) }.getOrElse { "Extra guide failed: ${redact(it.message)}" }
+            store.setString("xmltvAt", System.currentTimeMillis().toString())
+            xmltvBusy = false
+            xmltvTick++
+            if (verbose || msg.contains("fail", true) || msg.contains("Couldn't")) toast(msg)
+        }
+    }
+    LaunchedEffect(provider, xmltvUrl) {
+        if (provider == null || xmltvUrl.isBlank()) return@LaunchedEffect
+        val last = store.string("xmltvAt")?.toLongOrNull() ?: 0L
+        if (System.currentTimeMillis() - last > 6 * 3_600_000L) { delay(10_000); refreshXmltv(false) }
+    }
+    LaunchedEffect(player, audioLang, subLang) {
+        val b = player.trackSelectionParameters.buildUpon()
+        b.setPreferredAudioLanguage(LANG_CODES[audioLang.coerceIn(0, LANG_CODES.lastIndex)])
+        val sub = LANG_CODES[subLang.coerceIn(0, LANG_CODES.lastIndex)]
+        if (subLang == 0) b.setPreferredTextLanguage(null)
+        else b.setPreferredTextLanguage(sub).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+        player.trackSelectionParameters = b.build()
+    }
     LaunchedEffect(failoverTick) {
         if (failoverTick == 0) return@LaunchedEffect
         val c = current
@@ -714,14 +753,54 @@ private fun App() {
     fun recordNow(e: Entry, durMs: Long, label: String) {
         val url = recUrl(e)
         if (url.isBlank()) { toast("Can't record this channel"); return }
-        Recorder.startNow(ctx, RecJob("live:${e.id}", url, label, System.currentTimeMillis(), durMs))
+        Recorder.startNow(ctx, RecJob("live:${e.id}", url, label, System.currentTimeMillis(), durMs + store.int("recPadEnd", 2) * 60_000L))
         toast("Recording started: $label")
     }
-    fun scheduleRecording(ch: Entry, p: Programme) {
+    fun scheduleRecording(ch: Entry, p: Programme, quiet: Boolean = false) {
         val url = recUrl(ch)
         if (url.isBlank()) { toast("Can't record this channel"); return }
-        Recorder.schedule(ctx, RecJob("${ch.id}:${p.start}", url, "${nameOf(ch)} ${p.title}", p.start - 30_000, p.stop - p.start + 150_000))
-        toast("Recording scheduled for ${p.title}")
+        val padStart = store.int("recPadStart", 1) * 60_000L
+        val padEnd = store.int("recPadEnd", 2) * 60_000L
+        Recorder.schedule(ctx, RecJob("${ch.id}:${p.start}", url, "${nameOf(ch)} ${p.title}", p.start - padStart, p.stop - p.start + padStart + padEnd))
+        if (!quiet) toast("Recording scheduled for ${p.title}")
+    }
+    fun addSeriesRule(ch: Entry, title: String) {
+        if (seriesRules.mapNotNull(::decodeRule).none { it.first.id == ch.id && it.second.equals(title, true) }) {
+            seriesRules = seriesRules + encodeRule(ch, title)
+            store.setList("seriesRules", seriesRules)
+        }
+    }
+    fun removeSeriesRule(ch: Entry, title: String) {
+        seriesRules = seriesRules.filter { s -> decodeRule(s)?.let { it.first.id == ch.id && it.second.equals(title, true) } != true }
+        store.setList("seriesRules", seriesRules)
+    }
+    fun scanSeriesRules() {
+        val p = provider ?: return
+        scope.launch {
+            val now = System.currentTimeMillis()
+            var added = 0
+            for ((ch, title) in seriesRules.mapNotNull(::decodeRule)) {
+                var progs = runCatching { p.guideEpg(ch, 0, 48 * 3_600_000L) }.getOrDefault(emptyList())
+                if (xmltvUrl.isNotBlank() && (xmltvFirst || progs.isEmpty())) {
+                    val more = runCatching { xmltv.programmesFor(ch, now, now + 48 * 3_600_000L) }.getOrDefault(emptyList())
+                    if (more.isNotEmpty()) progs = more
+                }
+                for (pr in progs) {
+                    if (pr.start > now && pr.title.trim().equals(title.trim(), true)) {
+                        if (Recorder.jobs(ctx).none { it.id == "${ch.id}:${pr.start}" }) { scheduleRecording(ch, pr, quiet = true); added++ }
+                    }
+                }
+            }
+            if (added > 0) toast("Series recording: scheduled $added new episode(s)")
+        }
+    }
+    LaunchedEffect(provider) {
+        if (provider == null) return@LaunchedEffect
+        delay(12_000)
+        while (true) {
+            scanSeriesRules()
+            delay(3 * 3_600_000L)
+        }
     }
     fun addToMulti(e: Entry) {
         when {
@@ -836,6 +915,8 @@ private fun App() {
         kidsMode = store.isKids(store.active)
         kidsCats = store.list("kidsCats").toSet()
         kidsUsed = store.long("kidsUsed_${dayKey()}")
+        xmltvUrl = store.string("xmltvUrl").orEmpty(); xmltvFirst = store.flag("xmltvFirst", false)
+        chShifts = store.map("chShift"); seriesRules = store.list("seriesRules")
         unlocked = false
         player.stop()
         current = null; fullscreen = false; provider = null
@@ -1065,9 +1146,12 @@ private fun App() {
         }
         if (sortMode == 0 && sortAz && tab.browsable() && !searching) sorted.sortedBy { nameOf(it).lowercase() } else sorted
     }
-    val guide = remember(provider, epgShift) {
+    val guide = remember(provider, epgShift, chShifts, xmltvUrl, xmltvFirst, xmltvTick) {
         provider?.epgOffsetMs = epgShift * 3_600_000L
-        provider?.let { GuideData(it) }
+        provider?.channelShiftMs = chShifts.mapNotNull { (id, h) -> h.toLongOrNull()?.let { id to it * 3_600_000L } }.toMap()
+        provider?.let {
+            GuideData(it, if (xmltvUrl.isBlank()) null else { e, from, to -> xmltv.programmesFor(e, from, to) }, xmltvFirst)
+        }
     }
     val guideChannels = if (tab == Tab.LIVE) shownEntries.filter { it.kind == Kind.LIVE }
     else favoriteEntries.filter { it.kind == Kind.LIVE && visible(it) }
@@ -1099,6 +1183,9 @@ private fun App() {
         val e = current ?: return@LaunchedEffect
         val p = provider ?: return@LaunchedEffect
         retries = 0; playbackError = null
+        if (e.kind == Kind.LIVE) {
+            resizeIdx = (store.string("ar_${e.key()}")?.toIntOrNull() ?: store.int("resize", 0)).coerceIn(0, RESIZES.lastIndex)
+        }
         if (e.isLiveNow) {
             store.setString("last", e.encode())
             if (liveHistory.lastOrNull()?.key() != e.key()) {
@@ -1127,11 +1214,15 @@ private fun App() {
             else if (player.isPlaying) store.setLong(posKey(e), pos)
         }
     }
-    LaunchedEffect(current, now / 300_000, epgShift) {
+    LaunchedEffect(current, now / 300_000, epgShift, chShifts, xmltvTick) {
         val e = current
         val p = provider
         epg = if (e != null && p != null && e.isLiveNow) {
             var r = runCatching { p.epg(e, 3) }.getOrDefault(emptyList())
+            if (xmltvUrl.isNotBlank() && (xmltvFirst || r.isEmpty())) {
+                val more = runCatching { xmltv.programmesFor(e, now - 3 * 3_600_000L, now + 9 * 3_600_000L) }.getOrDefault(emptyList())
+                if (more.isNotEmpty()) r = more
+            }
             if (r.isEmpty()) {
                 for (v in variantsFor(e).filter { it.id != e.id }.take(3)) {
                     r = runCatching { p.epg(v, 3) }.getOrDefault(emptyList())
@@ -1412,7 +1503,25 @@ private fun App() {
             if (ch.kind == Kind.LIVE && !kidsMode) add(MenuItem(if (scheduled) "Cancel recording" else "Record this programme") {
                 if (scheduled) { Recorder.cancel(ctx, id); toast("Recording cancelled") } else scheduleRecording(ch, p)
             })
+            if (ch.kind == Kind.LIVE && !kidsMode) {
+                val hasRule = seriesRules.mapNotNull(::decodeRule).any { it.first.id == ch.id && it.second.equals(p.title, true) }
+                add(MenuItem(if (hasRule) "Stop recording every episode" else "Record every episode of this show") {
+                    if (hasRule) { removeSeriesRule(ch, p.title); toast("Series recording stopped") }
+                    else { addSeriesRule(ch, p.title); scheduleRecording(ch, p, quiet = true); scanSeriesRules(); toast("Recording every episode of ${p.title}") }
+                })
+            }
         }) { programTarget = null }
+    }
+    if (seriesOpen) {
+        ActionMenuDialog("Series recordings", buildList {
+            val rules = seriesRules.mapNotNull(::decodeRule)
+            if (rules.isEmpty()) add(MenuItem("None yet. In the Guide, select a programme and choose \"Record every episode\".", enabled = false) {})
+            rules.forEach { (ch, title) ->
+                add(MenuItem("$title  ·  ${nameOf(ch)}  (select to stop)", close = false) { removeSeriesRule(ch, title) })
+            }
+            add(MenuItem("Check for new episodes now") { scanSeriesRules() })
+            add(MenuItem("Close") {})
+        }) { seriesOpen = false }
     }
     if (recOpen) {
         val fmt = remember { java.text.SimpleDateFormat("EEE h:mm a", java.util.Locale.getDefault()) }
@@ -1500,10 +1609,21 @@ private fun App() {
                 if (Build.VERSION.SDK_INT >= 26) add(MenuItem("Picture-in-picture") { (ctx as? MainActivity)?.enterPip() })
                 add(MenuItem(audioLabel(player), close = false) { cycleAudio(player); tracksTick++ })
                 add(MenuItem(textLabel(player), close = false) { cycleText(player); tracksTick++ })
-                add(MenuItem("Picture: ${RESIZES[resizeIdx].second}", close = false) {
+                add(MenuItem("Picture: ${RESIZES[resizeIdx].second}${if (e != null && e.kind == Kind.LIVE) "  (remembered for this channel)" else ""}", close = false) {
                     resizeIdx = (resizeIdx + 1) % RESIZES.size
-                    store.setInt("resize", resizeIdx)
+                    if (e != null && e.kind == Kind.LIVE) store.setString("ar_${e.key()}", resizeIdx.toString())
+                    else store.setInt("resize", resizeIdx)
                 })
+                if (e != null && e.isLiveNow) {
+                    val cur = chShifts[e.id]?.toIntOrNull() ?: 0
+                    fun setShift(h: Int) {
+                        val v = h.coerceIn(-12, 12)
+                        chShifts = if (v == 0) chShifts - e.id else chShifts + (e.id to v.toString())
+                        store.setMap("chShift", chShifts)
+                    }
+                    add(MenuItem("This channel's guide time: ${if (cur >= 0) "+" else ""}$cur h  (select = +1 h)", close = false) { setShift(cur + 1) })
+                    add(MenuItem("This channel's guide time: −1 h", close = false) { setShift(cur - 1) })
+                }
                 if (e != null && e.isLiveNow) {
                     if (behind > 3000) add(MenuItem("Jump to live") { player.seekToDefaultPosition() })
                     if (curProg?.archive == true) {
@@ -1544,7 +1664,7 @@ private fun App() {
         }
     }
     @Suppress("UNUSED_EXPRESSION") layoutTick
-    val settingSections: List<SettingSection> = if (!showSettings) emptyList() else {
+    fun buildSettingSections(): List<SettingSection> {
         val active = profiles.firstOrNull { it.id == activeProfile } ?: profiles.first()
         fun onOff(b: Boolean) = if (b) "On" else "Off"
         val audioOrder = listOf(0, 1, 3, 2)
@@ -1554,7 +1674,7 @@ private fun App() {
         val themeIdx = THEME_PICKS.indexOfFirst { it.first == accentIdx && it.second == bgIdx }
         fun toggle(title: String, desc: String, on: Boolean, flip: () -> Unit) =
             SettingItem(title, onOff(on), desc, action = flip)
-        listOf(
+        return listOf(
             SettingSection("Appearance", "Colors, text and motion. Changes apply instantly.", listOf(
                 SettingItem("Theme", if (themeIdx >= 0) THEME_NAMES[themeIdx] else "Custom", "A ready-made accent and background together",
                     choices = THEME_NAMES, selected = themeIdx.coerceAtLeast(0), onPick = { i ->
@@ -1611,6 +1731,13 @@ private fun App() {
                     choices = BUFFERS, selected = bufferMode, onPick = { i -> bufferMode = i; store.setInt("buffer", i); layoutTick++ }),
                 toggle("Match frame rate", "Switch the TV to the video's frame rate", matchFps) { matchFps = !matchFps; store.setFlag("matchFps", matchFps) },
                 toggle("Auto-play next episode", "Start the next episode when one ends", autoNext) { autoNext = !autoNext; store.setFlag("autoNext", autoNext) },
+                SettingItem("Preferred audio language", LANG_NAMES[audioLang.coerceIn(0, LANG_NAMES.lastIndex)], "Picked automatically when a stream offers it",
+                    choices = LANG_NAMES, selected = audioLang, onPick = { i -> audioLang = i; store.setInt("audioLang", i); layoutTick++ }),
+                SettingItem("Preferred subtitles", if (subLang == 0) "Off" else LANG_NAMES[subLang.coerceIn(0, LANG_NAMES.lastIndex)], "Turned on automatically when a stream has them",
+                    choices = listOf("Off") + LANG_NAMES.drop(1), selected = subLang, onPick = { i -> subLang = i; store.setInt("subLang", i); layoutTick++ }),
+                SettingItem("Default picture mode", RESIZES[resizeIdx.coerceIn(0, RESIZES.lastIndex)].second, "Each channel also remembers its own setting",
+                    choices = RESIZES.map { it.second }, selected = resizeIdx.coerceIn(0, RESIZES.lastIndex),
+                    onPick = { i -> resizeIdx = i; store.setInt("resize", i); layoutTick++ }),
                 SettingItem("Subtitle size", SUB_NAMES[subSize], null,
                     choices = SUB_NAMES, selected = subSize, onPick = { i -> subSize = i; store.setInt("subSize", i); layoutTick++ }),
                 SettingItem("Live stream format", if (liveTs) "TS" else "HLS (m3u8)", "Switch if a provider streams better one way",
@@ -1626,6 +1753,21 @@ private fun App() {
                     action = {
                         textPrompt = TextPrompt("TMDB API key (free at themoviedb.org)", tmdbKey) { k -> tmdbKey = k.trim(); store.setGString("tmdbKey", tmdbKey); layoutTick++ }
                     }),
+                SettingItem("Extra guide (XMLTV URL)", if (xmltvUrl.isBlank()) "Not set" else if (xmltvBusy) "Updating…" else "On", "Adds a second guide that fills gaps. Needs the address of an XMLTV file.",
+                    action = {
+                        textPrompt = TextPrompt("XMLTV guide URL", xmltvUrl) { u ->
+                            xmltvUrl = u.trim(); store.setString("xmltvUrl", xmltvUrl); store.setString("xmltvAt", "0")
+                            if (xmltvUrl.isNotBlank()) refreshXmltv(true) else xmltvTick++
+                            layoutTick++
+                        }
+                    }),
+                SettingItem("Update extra guide now", null, "Downloads the XMLTV file again", enabled = xmltvUrl.isNotBlank(), action = { refreshXmltv(true) }),
+                toggle("Prefer extra guide", "Use the extra guide first, and your provider's only where it has nothing", xmltvFirst) { xmltvFirst = !xmltvFirst; store.setFlag("xmltvFirst", xmltvFirst) },
+                SettingItem("Recording padding: start", "${store.int("recPadStart", 1)} min", "Start recording this many minutes early",
+                    choices = PAD_START.map { "$it min" }, selected = PAD_START.indexOf(store.int("recPadStart", 1)).coerceAtLeast(0), onPick = { i -> setLayout("recPadStart", PAD_START[i]) }),
+                SettingItem("Recording padding: end", "${store.int("recPadEnd", 2)} min", "Keep recording this many minutes after the programme",
+                    choices = PAD_END.map { "$it min" }, selected = PAD_END.indexOf(store.int("recPadEnd", 2)).coerceAtLeast(0), onPick = { i -> setLayout("recPadEnd", PAD_END[i]) }),
+                SettingItem("Series recordings", "${seriesRules.size}", "Shows set to record every new episode", action = { seriesOpen = true }),
                 SettingItem("Recordings", "${Recorder.active.size} active, ${Recorder.jobs(ctx).size} scheduled", "Play, stop or delete recordings", action = { recOpen = true }),
                 SettingItem("Reminders", "${reminders.size}", "Programmes you asked to be reminded about", action = { remindersOpen = true }),
                 SettingItem("Multiview", "${multiList.size}/4", "Watch up to four channels at once", closes = true, action = { loadAccount(); player.pause(); multiOpen = true }),
@@ -1704,7 +1846,7 @@ private fun App() {
             )),
         )
     }
-
+    val settingSections = if (showSettings) buildSettingSections() else emptyList()
 
     if (accountOpen) {
         val a = account

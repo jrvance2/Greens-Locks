@@ -28,6 +28,8 @@ jobs:
           else
             echo "No signing secret set: using a temporary key (uninstall the old app before installing)"
           fi
+      - name: Run unit tests
+        run: gradle testReleaseUnitTest --no-daemon -Pvc=${{ github.run_number }}
       - run: gradle assembleRelease --no-daemon -Pvc=${{ github.run_number }}
         env:
           VANCETV_STORE_PASSWORD: ${{ secrets.VANCETV_STORE_PASSWORD }}

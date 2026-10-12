@@ -36,7 +36,12 @@ private fun msToDp(ms: Long): Dp = (ms / 60_000f * DP_PER_MIN).dp
 private fun hhmm(ms: Long): String = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(ms))
 
 /** Lazily fetched programmes per channel, a few requests at a time. */
-class GuideData(private val provider: Provider) {
+class GuideData(
+    private val provider: Provider,
+    /** An extra guide (XMLTV) to fill gaps, or to take priority when [extraFirst] is set. */
+    private val extra: (suspend (Entry, Long, Long) -> List<Programme>)? = null,
+    private val extraFirst: Boolean = false,
+) {
     val cache: SnapshotStateMap<String, List<Programme>> = mutableStateMapOf()
     private val gate = Semaphore(6)
 
@@ -44,7 +49,15 @@ class GuideData(private val provider: Provider) {
         if (cache.containsKey(e.id)) return
         gate.withPermit {
             if (cache.containsKey(e.id)) return@withPermit
-            cache[e.id] = runCatching { provider.guideEpg(e, 3 * 60 * 60_000L, 9 * 60 * 60_000L) }.getOrDefault(emptyList())
+            val now = System.currentTimeMillis()
+            val primary = runCatching { provider.guideEpg(e, 3 * 60 * 60_000L, 9 * 60 * 60_000L) }.getOrDefault(emptyList())
+            val fx = extra
+            val more = if (fx == null) emptyList() else runCatching { fx(e, now - 3 * 60 * 60_000L, now + 9 * 60 * 60_000L) }.getOrDefault(emptyList())
+            cache[e.id] = when {
+                extraFirst && more.isNotEmpty() -> more
+                primary.isNotEmpty() -> primary
+                else -> more
+            }
         }
     }
 }

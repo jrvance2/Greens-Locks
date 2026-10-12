@@ -23,6 +23,8 @@ data class Entry(
     val durMin: Int = 0,
     val added: Long = 0L,
     val rating: Float = 0f,
+    /** The guide's own id for this channel (Xtream epg_channel_id / M3U tvg-id), used to match an extra guide. */
+    val epgId: String = "",
 )
 
 val Entry.isLiveNow: Boolean get() = kind == Kind.LIVE && start == 0L
@@ -69,7 +71,7 @@ fun decodeReminder(s: String): Reminder? {
 fun Entry.key(): String = "${kind.name}:$id"
 
 fun Entry.encode(): String =
-    listOf(kind.name, id, ext, title, icon, num.toString(), cat, season.toString(), parent, series).joinToString(SEP)
+    listOf(kind.name, id, ext, title, icon, num.toString(), cat, season.toString(), parent, series, epgId).joinToString(SEP)
 
 fun decodeEntry(s: String): Entry? {
     val p = s.split(SEP)
@@ -83,6 +85,7 @@ fun decodeEntry(s: String): Entry? {
         season = p.getOrNull(7)?.toIntOrNull() ?: 0,
         parent = p.getOrElse(8) { "" },
         series = p.getOrElse(9) { "" },
+        epgId = p.getOrElse(10) { "" },
     )
 }
 
@@ -98,4 +101,14 @@ fun nowNext(list: List<Programme>, now: Long): Pair<Programme?, Programme?> {
     val current = upcoming.firstOrNull()?.takeIf { it.start <= now }
     val next = if (current != null) upcoming.getOrNull(1) else upcoming.firstOrNull()
     return current to next
+}
+
+/** "Record every episode of this show": a channel plus the programme title to match. */
+fun encodeRule(channel: Entry, title: String): String = channel.encode() + RSEP + title
+
+fun decodeRule(s: String): Pair<Entry, String>? {
+    val i = s.lastIndexOf(RSEP)
+    if (i < 0) return null
+    val ch = decodeEntry(s.substring(0, i)) ?: return null
+    return ch to s.substring(i + 1)
 }
