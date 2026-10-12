@@ -50,6 +50,19 @@ object Dimens {
     var railLabels by mutableStateOf(true)
     /** Soft click sound when focus moves (uses the system's navigation sounds). */
     var sounds by mutableStateOf(false)
+
+    // ---- layout options (see LayoutPrefs)
+    var corner by mutableStateOf(12.dp)
+    var rowScale by mutableFloatStateOf(1f)
+    var guideRow by mutableStateOf(56.dp)
+    /** 0 = card, 1 = minimal, 2 = hidden. */
+    var overlayStyle by mutableIntStateOf(0)
+    var showClock by mutableStateOf(true)
+    var topNav by mutableStateOf(false)
+    var homeHero by mutableStateOf(true)
+    var homeChips by mutableStateOf(true)
+    var glow by mutableStateOf(true)
+    var heroTint by mutableStateOf(true)
     /** 0 = full animations, 1 = reduced, 2 = off. */
     var animLevel by mutableIntStateOf(0)
 
@@ -60,7 +73,12 @@ object Dimens {
 
 data class BgPreset(val name: String, val bg: Color, val surface: Color, val surfaceHi: Color)
 
-val ACCENT_NAMES = listOf("Indigo", "Coral", "Teal", "Amber", "Green", "Pink")
+private fun hueAccent(h: Float) = Color.hsv(h, 0.62f, 1f) to Color.hsv((h + 35f) % 360f, 0.55f, 1f)
+
+val ACCENT_NAMES = listOf(
+    "Indigo", "Coral", "Teal", "Amber", "Green", "Pink",
+    "Red", "Orange", "Gold", "Lime", "Mint", "Cyan", "Sky", "Blue", "Violet", "Purple", "Magenta",
+)
 val ACCENTS = listOf(
     Color(0xFF6C8CFF) to Color(0xFFA27BFF),
     Color(0xFFFF5C6C) to Color(0xFFFF9A5C),
@@ -68,11 +86,20 @@ val ACCENTS = listOf(
     Color(0xFFFABE3C) to Color(0xFFFF8A3C),
     Color(0xFF4ADE80) to Color(0xFF2DD4BF),
     Color(0xFFF472B6) to Color(0xFFA78BFA),
+    hueAccent(355f), hueAccent(24f), hueAccent(45f), hueAccent(85f), hueAccent(150f), hueAccent(185f),
+    hueAccent(205f), hueAccent(225f), hueAccent(262f), hueAccent(285f), hueAccent(315f),
 )
 val BACKGROUNDS = listOf(
     BgPreset("Navy", Color(0xFF080C16), Color(0xFF111827), Color(0xFF1B2640)),
     BgPreset("Black", Color(0xFF000000), Color(0xFF0C0C10), Color(0xFF1A1A22)),
     BgPreset("Graphite", Color(0xFF14161B), Color(0xFF1D2027), Color(0xFF2A2E38)),
+    BgPreset("Slate", Color(0xFF0B1220), Color(0xFF162033), Color(0xFF243049)),
+    BgPreset("Plum", Color(0xFF140A1E), Color(0xFF1F1330), Color(0xFF2E1D47)),
+    BgPreset("Forest", Color(0xFF07130F), Color(0xFF0F1F19), Color(0xFF1A332A)),
+    BgPreset("Ocean", Color(0xFF06141A), Color(0xFF0D222B), Color(0xFF163542)),
+    BgPreset("Espresso", Color(0xFF14100D), Color(0xFF201A15), Color(0xFF30271F)),
+    BgPreset("Crimson night", Color(0xFF160709), Color(0xFF241014), Color(0xFF3A1A20)),
+    BgPreset("Midnight blue", Color(0xFF050A1A), Color(0xFF0B1630), Color(0xFF14264A)),
 )
 val CARD_NAMES = listOf("Compact", "Comfortable", "Large")
 val CARD_SCALES = listOf(0.86f, 1f, 1.2f)
@@ -80,8 +107,18 @@ val TEXT_NAMES = listOf("Small", "Normal", "Large")
 val TEXT_SCALES = listOf(0.9f, 1f, 1.15f)
 val UI_NAMES = listOf("Dense 75%", "Compact 85%", "Standard 100%", "Large 115%")
 val UI_SCALES = listOf(0.75f, 0.85f, 1f, 1.15f)
-val THEME_NAMES = listOf("Midnight", "OLED Teal", "Warm Amber", "Forest", "Rose")
-val THEME_PICKS = listOf(0 to 0, 2 to 1, 3 to 2, 4 to 2, 5 to 1)
+private fun acc(name: String) = ACCENT_NAMES.indexOf(name).coerceAtLeast(0)
+private fun bg(name: String) = BACKGROUNDS.indexOfFirst { it.name == name }.coerceAtLeast(0)
+val THEME_NAMES = listOf(
+    "Midnight", "OLED Teal", "Warm Amber", "Forest", "Rose",
+    "Plum Violet", "Ocean Cyan", "Slate Sky", "Crimson", "Espresso Gold", "Midnight Blue",
+)
+val THEME_PICKS = listOf(
+    acc("Indigo") to bg("Navy"), acc("Teal") to bg("Black"), acc("Amber") to bg("Graphite"),
+    acc("Green") to bg("Graphite"), acc("Pink") to bg("Black"),
+    acc("Violet") to bg("Plum"), acc("Cyan") to bg("Ocean"), acc("Sky") to bg("Slate"),
+    acc("Red") to bg("Crimson night"), acc("Gold") to bg("Espresso"), acc("Blue") to bg("Midnight blue"),
+)
 val ANIM_NAMES = listOf("Full", "Reduced", "Off")
 val START_NAMES = listOf("Home", "Live TV", "Last channel")
 

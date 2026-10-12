@@ -259,7 +259,7 @@ fun HeroBanner(
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var tint by remember(entry.icon) { mutableStateOf<Color?>(null) }
     LaunchedEffect(entry.icon) {
-        tint = if (entry.icon.startsWith("http") && entry.kind != Kind.LIVE) dominantColor(ctx, entry.icon) else null
+        tint = if (Dimens.heroTint && entry.icon.startsWith("http") && entry.kind != Kind.LIVE) dominantColor(ctx, entry.icon) else null
     }
     val wash = tint ?: Palette.accent
     val animatedWash by androidx.compose.animation.animateColorAsState(wash, label = "heroWash")
@@ -440,11 +440,45 @@ fun BoxScope.FullscreenOverlay(
     behindLiveSec: Int = 0,
     sleepLeftMin: Int = 0,
 ) {
-    AnimatedVisibility(visible, Modifier.align(Alignment.TopEnd)) {
+    if (Dimens.showClock) AnimatedVisibility(visible, Modifier.align(Alignment.TopEnd)) {
         Text(
             clockText(now), color = Palette.text, fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(28.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.6f)).padding(horizontal = 16.dp, vertical = 6.dp),
         )
+    }
+    if (Dimens.overlayStyle == 2) return
+    if (Dimens.overlayStyle == 1) {
+        AnimatedVisibility(visible, Modifier.align(Alignment.BottomStart)) {
+            val (cur, _) = nowNext(epg, now)
+            Column(
+                Modifier.padding(horizontal = 40.dp, vertical = 28.dp).widthIn(max = 640.dp)
+                    .clip(RoundedCornerShape(16.dp)).background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isLive) {
+                        Text(
+                            "\u25CF", color = Palette.live, modifier = Modifier.padding(end = 8.dp),
+                        )
+                    }
+                    Text(
+                        (if (favorite) "\u2605 " else "") + name + if (isLive && entry.num > 0) "  \u00B7  ${entry.num}" else "",
+                        style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (isLive && cur != null) {
+                    Text(cur.title, color = Palette.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                    ProgressLine((now - cur.start).toFloat() / (cur.stop - cur.start).coerceAtLeast(1), Modifier.fillMaxWidth().padding(top = 6.dp))
+                } else if (!isLive && duration > 0) {
+                    ProgressLine(position.toFloat() / duration, Modifier.fillMaxWidth().padding(top = 8.dp))
+                    Text(
+                        "${fmtTime(position)} / ${fmtTime(duration)}", color = Palette.muted,
+                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+        }
+        return
     }
     AnimatedVisibility(visible, Modifier.align(Alignment.BottomStart)) {
         Column(
@@ -569,6 +603,38 @@ fun SplashScreen() {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             BrandWordmark(34.sp, Modifier.graphicsLayer { alpha = pulse })
             Text("Loading your library\u2026", color = Palette.muted, modifier = Modifier.padding(top = 18.dp))
+        }
+    }
+}
+
+/** Navigation across the top of the screen instead of down the side. */
+@Composable
+fun TopNav(items: List<RailItem>, modifier: Modifier = Modifier, onItem: (RailIconType) -> Unit) {
+    Row(
+        modifier.fillMaxWidth().height(60.dp).background(Palette.surface).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BrandWordmark(15.sp)
+        Spacer(Modifier.width(22.dp))
+        items.forEach { item ->
+            FocusCard(Modifier.padding(horizontal = 3.dp), RoundedCornerShape(50), 1f, 2.dp, onClick = { onItem(item.icon) }) { focused ->
+                Row(
+                    Modifier.background(
+                        if (focused) Palette.accent.copy(alpha = 0.30f)
+                        else if (item.selected) Palette.accent.copy(alpha = 0.18f) else Color.Transparent
+                    ).padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RailIcon(item.icon, if (item.selected || focused) Palette.accent else Palette.muted)
+                    if (Dimens.railLabels) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            item.label, maxLines = 1, style = MaterialTheme.typography.labelLarge,
+                            color = if (item.selected || focused) Palette.text else Palette.muted,
+                        )
+                    }
+                }
+            }
         }
     }
 }

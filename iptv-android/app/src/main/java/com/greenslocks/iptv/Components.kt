@@ -57,7 +57,7 @@ import coil.request.ImageRequest
 @Composable
 fun FocusCard(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(12.dp),
+    shape: Shape = RoundedCornerShape(Dimens.corner),
     scaleOnFocus: Float = 1.08f,
     borderWidth: Dp = 3.dp,
     onLongClick: () -> Unit = {},
@@ -81,7 +81,7 @@ fun FocusCard(
                 else Modifier
             )
             .then(
-                if (focused && level == 0 && scaleOnFocus != 1f)
+                if (focused && level == 0 && scaleOnFocus != 1f && Dimens.glow)
                     Modifier.shadow(16.dp, shape, clip = false, ambientColor = Palette.accent, spotColor = Palette.accent)
                 else Modifier
             )
@@ -360,10 +360,10 @@ fun ChannelRow(
         Row(
             Modifier.fillMaxWidth()
                 .background(if (focused) Palette.accent.copy(alpha = 0.2f) else if (playing) Palette.surfaceHi else Palette.surface)
-                .padding(10.dp),
+                .padding((10 * Dimens.rowScale).dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Artwork(icon, title, Modifier.size(width = 80.dp, height = 54.dp).clip(RoundedCornerShape(6.dp)), ContentScale.Fit)
+            Artwork(icon, title, Modifier.size(width = (80 * Dimens.rowScale).dp, height = (54 * Dimens.rowScale).dp).clip(RoundedCornerShape(6.dp)), ContentScale.Fit)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

@@ -89,9 +89,8 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("playlist_url")?.let { store.setUrl(it) }
         intent.getStringExtra("tmdb_key")?.let { store.setGString("tmdbKey", it) }
         applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0), store.int("ui", 1))
-        Dimens.railLabels = store.flag("railLabels", true)
+        LayoutPrefs.load(store)
         Net.setMode(store.int("uaMode", 0))
-        Dimens.sounds = store.flag("sounds", false)
         pendingLaunch.value = intent.getStringExtra("play_entry")
         setContent { IptvTheme { App() } }
     }
@@ -265,6 +264,7 @@ private fun App() {
     var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
     var uaMode by remember { mutableIntStateOf(store.int("uaMode", 0)) }
     var audioMode by remember { mutableIntStateOf(store.int("audioMode", if (store.flag("pcmAudio", false)) 2 else 0)) }
+    var layoutTick by remember { mutableIntStateOf(0) }
     var trackPanelOpen by remember { mutableStateOf(false) }
     var trackTick by remember { mutableIntStateOf(0) }
     val trackFocus = remember { FocusRequester() }
@@ -978,7 +978,7 @@ private fun App() {
         matchFps = store.flag("matchFps", true); liveTs = store.flag("liveTs", false)
         bufferMode = store.int("buffer", 1); resizeIdx = store.int("resize", 0).coerceIn(0, RESIZES.lastIndex)
         subSize = store.int("subSize", 1); sortMode = store.int("sortMode", 0)
-        Dimens.railLabels = store.flag("railLabels", true); Dimens.sounds = store.flag("sounds", false); zapStrip = store.flag("zapStrip", false); mergeDupes = store.flag("mergeDupes", true)
+        LayoutPrefs.load(store); zapStrip = store.flag("zapStrip", false); mergeDupes = store.flag("mergeDupes", true)
         applyNow()
         switchProfile(activeProfile)
         toast("Settings restored")
@@ -1289,7 +1289,7 @@ private fun App() {
     LaunchedEffect(fullscreen) { if (fullscreen) { delay(50); runCatching { rootFocus.requestFocus() } } }
     val liveFocusIdx = shownEntries.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
 
-    val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null) || pickerOpen || appearanceOpen || searchOpen || multiOpen
+    val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null) || pickerOpen || appearanceOpen || searchOpen || multiOpen || showSettings
     BackHandler(enabled = showSetup && provider != null) { showSetup = false }
     BackHandler(enabled = provider != null && !showSetup && tab != Tab.HOME && !overlayActive) { openTab(Tab.HOME) }
     BackHandler(enabled = detailEntry != null) { closeDetail() }
@@ -1304,6 +1304,7 @@ private fun App() {
     }
     BackHandler(enabled = stripIdx != null) { stripIdx = null }
     BackHandler(enabled = trackPanelOpen) { trackPanelOpen = false }
+    BackHandler(enabled = showSettings && !showSetup) { showSettings = false; listVersion++ }
     LaunchedEffect(trackPanelOpen) {
         if (trackPanelOpen) {
             repeat(15) { delay(80); if (runCatching { trackFocus.requestFocus() }.isSuccess) return@LaunchedEffect }
@@ -1524,6 +1525,8 @@ private fun App() {
         ) { showOptions = false }
     }
 
+    fun setLayout(key: String, v: Int) { store.setInt(key, v); LayoutPrefs.load(store); layoutTick++ }
+    fun setLayoutFlag(key: String, v: Boolean) { store.setFlag(key, v); LayoutPrefs.load(store); layoutTick++ }
     fun openSettings() {
         if (kidsMode) requirePin("Parent PIN") { showSettings = true }
         else if (hasPin && !unlocked) requirePin("Enter PIN for settings") { showSettings = true } else showSettings = true
@@ -1540,43 +1543,124 @@ private fun App() {
             PinResult.KEEP
         }
     }
-    if (showSettings) {
+    @Suppress("UNUSED_EXPRESSION") layoutTick
+    val settingSections: List<SettingSection> = if (!showSettings) emptyList() else {
         val active = profiles.firstOrNull { it.id == activeProfile } ?: profiles.first()
-        ActionMenuDialog(
-            "Settings",
-            buildList {
+        fun onOff(b: Boolean) = if (b) "On" else "Off"
+        val audioOrder = listOf(0, 1, 3, 2)
+        val audioNames = listOf(if (smartMode == 3) "Auto (software 5.1)" else "Auto", "Surround (passthrough)", "Surround (software decoder)", "Stereo (compatible)")
+        val kidsSteps = listOf(0, 30, 60, 90, 120, 180)
+        val shiftNames = (-12..12).map { if (it >= 0) "+$it h" else "$it h" }
+        val themeIdx = THEME_PICKS.indexOfFirst { it.first == accentIdx && it.second == bgIdx }
+        fun toggle(title: String, desc: String, on: Boolean, flip: () -> Unit) =
+            SettingItem(title, onOff(on), desc, action = flip)
+        listOf(
+            SettingSection("Appearance", "Colors, text and motion. Changes apply instantly.", listOf(
+                SettingItem("Theme", if (themeIdx >= 0) THEME_NAMES[themeIdx] else "Custom", "A ready-made accent and background together",
+                    choices = THEME_NAMES, selected = themeIdx.coerceAtLeast(0), onPick = { i ->
+                        accentIdx = THEME_PICKS[i].first; bgIdx = THEME_PICKS[i].second
+                        store.setInt("accent", accentIdx); store.setInt("bg", bgIdx); applyNow(); layoutTick++
+                    }),
+                SettingItem("Accent color", ACCENT_NAMES[accentIdx.coerceIn(0, ACCENT_NAMES.lastIndex)], "Buttons, highlights and progress bars",
+                    swatch = Palette.accent, choices = ACCENT_NAMES, selected = accentIdx, onPick = { i ->
+                        accentIdx = i; store.setInt("accent", i); applyNow(); layoutTick++
+                    }),
+                SettingItem("Background", BACKGROUNDS[bgIdx.coerceIn(0, BACKGROUNDS.lastIndex)].name, "Black suits OLED TVs; the others tint the whole app",
+                    choices = BACKGROUNDS.map { it.name }, selected = bgIdx, onPick = { i ->
+                        bgIdx = i; store.setInt("bg", i); applyNow(); layoutTick++
+                    }),
+                SettingItem("Text size", TEXT_NAMES[textIdx], "Scales every label",
+                    choices = TEXT_NAMES, selected = textIdx, onPick = { i -> textIdx = i; store.setInt("text", i); applyNow(); layoutTick++ }),
+                SettingItem("Interface size", UI_NAMES[uiIdx], "Dense fits the most on a 4K TV; Large is easiest from far away",
+                    choices = UI_NAMES, selected = uiIdx, onPick = { i -> uiIdx = i; store.setInt("ui", i); applyNow(); layoutTick++ }),
+                SettingItem("Animations", ANIM_NAMES[animIdx], "Reduced or Off is smoothest on slower devices",
+                    choices = ANIM_NAMES, selected = animIdx, onPick = { i -> animIdx = i; store.setInt("anim", i); applyNow(); layoutTick++ }),
+                toggle("Focus glow", "A soft glow around the selected card", Dimens.glow) { setLayoutFlag("glow", !Dimens.glow) },
+                toggle("Banner color from poster", "Tint the Home banner with the poster's colors", Dimens.heroTint) { setLayoutFlag("heroTint", !Dimens.heroTint) },
+                toggle("Navigation sounds", "A soft click as you move around (uses your TV's system sounds)", Dimens.sounds) { setLayoutFlag("sounds", !Dimens.sounds) },
+            )),
+            SettingSection("Layout", "How the app is arranged.", listOf(
+                SettingItem("Navigation", NAV_NAMES[if (Dimens.topNav) 1 else 0], "Menu down the side or across the top",
+                    choices = NAV_NAMES, selected = if (Dimens.topNav) 1 else 0, onPick = { i -> setLayoutFlag("topNav", i == 1) }),
+                SettingItem("Menu style", if (Dimens.railLabels) "Icons + labels" else "Icons only", "Icons only gives the content more room",
+                    choices = listOf("Icons + labels", "Icons only"), selected = if (Dimens.railLabels) 0 else 1, onPick = { i -> setLayoutFlag("railLabels", i == 0) }),
+                SettingItem("Start screen", START_NAMES[startIdx], "What opens when you launch Vance TV",
+                    choices = START_NAMES, selected = startIdx, onPick = { i -> startIdx = i; store.setInt("start", i); layoutTick++ }),
+                toggle("Home banner", "The large featured title at the top of Home", Dimens.homeHero) { setLayoutFlag("homeHero", !Dimens.homeHero) },
+                toggle("Home filter chips", "All, Movies, Series, Live and 4K above the rows", Dimens.homeChips) { setLayoutFlag("homeChips", !Dimens.homeChips) },
+                SettingItem("Card size", CARD_NAMES[cardIdx], "Compact fits more; Large reads better from the couch",
+                    choices = CARD_NAMES, selected = cardIdx, onPick = { i -> cardIdx = i; store.setInt("cards", i); applyNow(); layoutTick++ }),
+                SettingItem("Corner style", CORNER_NAMES[store.int("corner", 1).coerceIn(0, 2)], "Sharp, rounded or soft corners on cards and buttons",
+                    choices = CORNER_NAMES, selected = store.int("corner", 1).coerceIn(0, 2), onPick = { i -> setLayout("corner", i) }),
+                SettingItem("Channel row size", ROW_NAMES[store.int("rowSize", 1).coerceIn(0, 2)], "Logo and spacing in the channel list",
+                    choices = ROW_NAMES, selected = store.int("rowSize", 1).coerceIn(0, 2), onPick = { i -> setLayout("rowSize", i) }),
+                SettingItem("Guide row height", GUIDE_ROW_NAMES[store.int("guideRow", 1).coerceIn(0, 2)], "Compact shows more channels at once",
+                    choices = GUIDE_ROW_NAMES, selected = store.int("guideRow", 1).coerceIn(0, 2), onPick = { i -> setLayout("guideRow", i) }),
+                SettingItem("Player info", OVERLAY_NAMES[Dimens.overlayStyle], "What appears when you press a button during playback",
+                    choices = OVERLAY_NAMES, selected = Dimens.overlayStyle, onPick = { i -> setLayout("overlay", i) }),
+                toggle("Clock in player", "Show the time in the corner during playback", Dimens.showClock) { setLayoutFlag("clock", !Dimens.showClock) },
+                SettingItem("Up/Down in player", if (zapStrip) "Channel strip" else "Switch channel", "Browse a strip of channels, or change channel straight away",
+                    choices = listOf("Switch channel", "Channel strip"), selected = if (zapStrip) 1 else 0, onPick = { i -> zapStrip = i == 1; store.setFlag("zapStrip", zapStrip); layoutTick++ }),
+                toggle("Sort A\u2013Z", "Sort categories and channels alphabetically", sortAz) { sortAz = !sortAz; store.setFlag("sortAz", sortAz) },
+                toggle("Show hidden items", "Show channels and categories you hid", showHidden) { showHidden = !showHidden; store.setFlag("showHidden", showHidden) },
+            )),
+            SettingSection("Playback & audio", "Sound, picture and network.", listOf(
+                SettingItem("Audio output", audioNames[audioOrder.indexOf(audioMode).coerceAtLeast(0)], "Try Surround (software decoder) if 5.1 only plays as stereo",
+                    choices = audioNames, selected = audioOrder.indexOf(audioMode).coerceAtLeast(0), onPick = { i -> audioMode = audioOrder[i]; store.setInt("audioMode", audioMode); layoutTick++ }),
+                SettingItem("Buffer", BUFFERS[bufferMode], "Higher means fewer stalls but a slower start",
+                    choices = BUFFERS, selected = bufferMode, onPick = { i -> bufferMode = i; store.setInt("buffer", i); layoutTick++ }),
+                toggle("Match frame rate", "Switch the TV to the video's frame rate", matchFps) { matchFps = !matchFps; store.setFlag("matchFps", matchFps) },
+                toggle("Auto-play next episode", "Start the next episode when one ends", autoNext) { autoNext = !autoNext; store.setFlag("autoNext", autoNext) },
+                SettingItem("Subtitle size", SUB_NAMES[subSize], null,
+                    choices = SUB_NAMES, selected = subSize, onPick = { i -> subSize = i; store.setInt("subSize", i); layoutTick++ }),
+                SettingItem("Live stream format", if (liveTs) "TS" else "HLS (m3u8)", "Switch if a provider streams better one way",
+                    choices = listOf("HLS (m3u8)", "TS"), selected = if (liveTs) 1 else 0, onPick = { i -> liveTs = i == 1; store.setFlag("liveTs", liveTs); layoutTick++ }),
+                SettingItem("Network identity", Net.UA_NAMES[uaMode], "Try VLC or TiviMate if a provider blocks or throttles streams",
+                    choices = Net.UA_NAMES, selected = uaMode, onPick = { i -> uaMode = i; store.setInt("uaMode", i); Net.setMode(i); layoutTick++ }),
+                toggle("Merge duplicate channels", "Combine HD, 4K and backup copies of a channel", mergeDupes) { mergeDupes = !mergeDupes; store.setFlag("mergeDupes", mergeDupes) },
+            )),
+            SettingSection("Guide & recording", "Guide times, movie info, reminders and recordings.", listOf(
+                SettingItem("Guide time shift", shiftNames[epgShift + 12], "Fix guide times that are in the wrong time zone",
+                    choices = shiftNames, selected = epgShift + 12, onPick = { i -> epgShift = i - 12; store.setInt("epgShift", epgShift); layoutTick++ }),
+                SettingItem("Movie info (TMDB key)", if (tmdbKey.isBlank()) "Not set" else "On", "Cast, backdrops and trailers from a free TMDB key",
+                    action = {
+                        textPrompt = TextPrompt("TMDB API key (free at themoviedb.org)", tmdbKey) { k -> tmdbKey = k.trim(); store.setGString("tmdbKey", tmdbKey); layoutTick++ }
+                    }),
+                SettingItem("Recordings", "${Recorder.active.size} active, ${Recorder.jobs(ctx).size} scheduled", "Play, stop or delete recordings", action = { recOpen = true }),
+                SettingItem("Reminders", "${reminders.size}", "Programmes you asked to be reminded about", action = { remindersOpen = true }),
+                SettingItem("Multiview", "${multiList.size}/4", "Watch up to four channels at once", closes = true, action = { loadAccount(); player.pause(); multiOpen = true }),
+            )),
+            SettingSection("Profiles & parental", "Profiles, Kids mode and PIN.", buildList {
                 profiles.forEach { pr ->
-                    add(MenuItem((if (pr.id == activeProfile) "● " else "○ ") + pr.name) {
-                        if (pr.id != activeProfile) switchProfile(pr.id)
-                    })
+                    add(SettingItem(pr.name, if (pr.id == activeProfile) "Active" else "Switch", if (store.isKids(pr.id)) "Kids profile" else null,
+                        action = { if (pr.id != activeProfile) { showSettings = false; switchProfile(pr.id) } }))
                 }
-                add(MenuItem("+ New profile") {
+                add(SettingItem("New profile", null, "Add a profile with its own login, favorites and layout", action = {
                     val id = store.nextProfileId()
                     profiles = profiles + Profile(id, "Profile $id")
                     store.saveProfiles(profiles)
+                    showSettings = false
                     switchProfile(id)
-                })
-                add(MenuItem("Change login for \"${active.name}\"") { showSetup = true })
-                add(MenuItem("Rename profile \"${active.name}\"") {
+                }))
+                add(SettingItem("Change login", active.name, "Sign in with a different server or playlist", closes = true, action = { showSetup = true }))
+                add(SettingItem("Rename profile", active.name, null, action = {
                     textPrompt = TextPrompt("Profile name", active.name) { n ->
                         if (n.isNotBlank()) {
                             profiles = profiles.map { if (it.id == active.id) it.copy(name = n.trim()) else it }
                             store.saveProfiles(profiles)
                         }
                     }
-                })
-                add(MenuItem("Delete profile \"${active.name}\"", enabled = active.id != 0) {
+                }))
+                add(SettingItem("Delete profile", active.name, "Removes this profile's data", enabled = active.id != 0, action = {
                     val id = active.id
                     store.deleteProfileData(id)
                     profiles = profiles.filter { it.id != id }
                     store.saveProfiles(profiles)
+                    showSettings = false
                     switchProfile(0)
-                })
-                add(MenuItem("Account & subscription…") { account = null; accountOpen = true; loadAccount() })
-                add(MenuItem("Check for updates…") { updateOpen = true; checkUpdates(false) })
-                add(MenuItem("Appearance…") { appearanceOpen = true })
-                add(MenuItem("Choose categories…") { pickerKids = false; pickerTab = 0; pickerOpen = true })
-                add(MenuItem("Kids profile: ${if (kidsMode) "on" else "off"}", close = false) {
+                }))
+                add(SettingItem("Choose categories", null, "Hide the categories you never watch", closes = true, action = { pickerKids = false; pickerTab = 0; pickerOpen = true }))
+                add(SettingItem("Kids profile", onOff(kidsMode), "Only allowed categories, no search, PIN to leave settings", action = {
                     if (!kidsMode) {
                         if (!hasPin) toast("Set a parental PIN first, then turn this on")
                         else {
@@ -1588,86 +1672,39 @@ private fun App() {
                         store.setKids(activeProfile, false); kidsMode = false
                         resetBrowsing(); provider?.let { loadHome(it) }
                     }
-                })
-                if (kidsMode) add(MenuItem("Kids: choose allowed categories…") { pickerKids = true; pickerTab = 0; pickerOpen = true })
-                add(MenuItem("Kids daily limit: ${if (kidsLimit == 0) "off" else "$kidsLimit min"}", close = false) {
-                    val steps = listOf(0, 30, 60, 90, 120, 180)
-                    kidsLimit = steps[(steps.indexOf(kidsLimit).coerceAtLeast(0) + 1) % steps.size]
-                    store.setInt("kidsLimit", kidsLimit)
-                })
-                add(MenuItem("Up/Down in player: ${if (zapStrip) "channel strip" else "switch channel"}", close = false) {
-                    zapStrip = !zapStrip; store.setFlag("zapStrip", zapStrip)
-                })
-                add(MenuItem("Audio output: ${mapOf(0 to (if (smartMode == 3) "Auto (software 5.1)" else "Auto"), 1 to "Surround (passthrough)", 3 to "Surround (software decoder)", 2 to "Stereo (compatible)")[audioMode]}", close = false) {
-                    val order = listOf(0, 1, 3, 2)
-                    audioMode = order[(order.indexOf(audioMode).coerceAtLeast(0) + 1) % order.size]
-                    store.setInt("audioMode", audioMode)
-                })
-                add(MenuItem("Network identity: ${Net.UA_NAMES[uaMode]}  — try VLC or TiviMate if a provider blocks or throttles streams", close = false) {
-                    uaMode = (uaMode + 1) % Net.UA_NAMES.size; store.setInt("uaMode", uaMode); Net.setMode(uaMode)
-                })
-                add(MenuItem("Merge duplicate channels (HD/4K/backup): ${if (mergeDupes) "on" else "off"}", close = false) {
-                    mergeDupes = !mergeDupes; store.setFlag("mergeDupes", mergeDupes)
-                })
-                add(MenuItem("Share settings with another device…") { startSharing() })
-                add(MenuItem("Get settings from another device…") {
+                }))
+                if (kidsMode) add(SettingItem("Kids: allowed categories", null, null, closes = true, action = { pickerKids = true; pickerTab = 0; pickerOpen = true }))
+                add(SettingItem("Kids daily limit", if (kidsLimit == 0) "Off" else "$kidsLimit min", "Screen time per day; the parent PIN adds more",
+                    choices = kidsSteps.map { if (it == 0) "Off" else "$it min" }, selected = kidsSteps.indexOf(kidsLimit).coerceAtLeast(0),
+                    onPick = { i -> kidsLimit = kidsSteps[i]; store.setInt("kidsLimit", kidsLimit); layoutTick++ }))
+                add(SettingItem(if (hasPin) "Change PIN" else "Set parental PIN", if (hasPin) "Set" else "Not set", null, action = {
+                    if (hasPin) requirePin("Enter current PIN") { newPinFlow() } else newPinFlow()
+                }))
+                if (hasPin) {
+                    add(toggle("Lock adult categories", "Require the PIN for adult categories", lockAdult) { lockAdult = !lockAdult; store.setFlag("lockAdult", lockAdult) })
+                    if (unlocked) add(SettingItem("Lock now", null, null, action = { unlocked = false }))
+                    add(SettingItem("Remove PIN", null, null, action = { requirePin("Enter PIN to remove it") { store.clearPin(); hasPin = false } }))
+                }
+            }),
+            SettingSection("Data & backup", "Account, backups and syncing between devices.", listOf(
+                SettingItem("Account & subscription", null, "Expiry, connections and server details", action = { account = null; accountOpen = true; loadAccount() }),
+                SettingItem("Rebuild search index", null, "Refresh the on-device search of your library", action = { provider?.let { rebuildIndex(it, true) } }),
+                SettingItem("Back up settings to a file", null, null, action = { backup() }),
+                SettingItem("Restore settings from backup", null, null, action = { restore() }),
+                SettingItem("Share settings with another device", null, "Shows an address and code for another Vance TV", action = { startSharing() }),
+                SettingItem("Get settings from another device", null, null, action = {
                     textPrompt = TextPrompt("Address shown on the other device", "") { addr ->
                         textPrompt = TextPrompt("Code shown on the other device", "") { code -> pullSync(addr, code) }
                     }
-                })
-                add(MenuItem("Recordings (${Recorder.active.size} active, ${Recorder.jobs(ctx).size} scheduled)…") { recOpen = true })
-                add(MenuItem("Multiview (${multiList.size}/4)…") { loadAccount(); player.pause(); multiOpen = true })
-                add(MenuItem("Reminders (${reminders.size})…") { remindersOpen = true })
-                add(MenuItem("Guide time: ${if (epgShift >= 0) "+" else ""}$epgShift h  (select = +1 h)", close = false) {
-                    epgShift = if (epgShift >= 12) -12 else epgShift + 1; store.setInt("epgShift", epgShift)
-                })
-                add(MenuItem("Guide time: −1 h", close = false) {
-                    epgShift = if (epgShift <= -12) 12 else epgShift - 1; store.setInt("epgShift", epgShift)
-                })
-                add(MenuItem("Movie info (TMDB key): ${if (tmdbKey.isBlank()) "not set" else "on"}") {
-                    textPrompt = TextPrompt("TMDB API key (free at themoviedb.org)", tmdbKey) { k ->
-                        tmdbKey = k.trim(); store.setGString("tmdbKey", tmdbKey)
-                    }
-                })
-                add(MenuItem("Match frame rate: ${if (matchFps) "on" else "off"}", close = false) {
-                    matchFps = !matchFps; store.setFlag("matchFps", matchFps)
-                })
-                add(MenuItem("Auto-play next episode: ${if (autoNext) "on" else "off"}", close = false) {
-                    autoNext = !autoNext; store.setFlag("autoNext", autoNext)
-                })
-                add(MenuItem("Subtitle size: ${SUB_NAMES[subSize]}", close = false) {
-                    subSize = (subSize + 1) % SUB_NAMES.size; store.setInt("subSize", subSize)
-                })
-                add(MenuItem("Live stream format: ${if (liveTs) "TS" else "HLS (m3u8)"}", close = false) {
-                    liveTs = !liveTs; store.setFlag("liveTs", liveTs)
-                })
-                add(MenuItem("Rebuild search index") { provider?.let { rebuildIndex(it, true) } })
-                add(MenuItem("Back up settings to a file") { backup() })
-                add(MenuItem("Restore settings from backup") { restore() })
-                add(MenuItem("Sort A–Z: ${if (sortAz) "on" else "off"}", close = false) {
-                    sortAz = !sortAz; store.setFlag("sortAz", sortAz)
-                })
-                add(MenuItem("Show hidden items: ${if (showHidden) "on" else "off"}", close = false) {
-                    showHidden = !showHidden; store.setFlag("showHidden", showHidden)
-                })
-                add(MenuItem("Buffer: ${BUFFERS[bufferMode]}  (higher = fewer stalls, slower start)", close = false) {
-                    bufferMode = (bufferMode + 1) % BUFFERS.size; store.setInt("buffer", bufferMode)
-                })
-                add(MenuItem(if (hasPin) "Change PIN" else "Set parental PIN") {
-                    if (hasPin) requirePin("Enter current PIN") { newPinFlow() } else newPinFlow()
-                })
-                if (hasPin) {
-                    add(MenuItem("Lock adult categories: ${if (lockAdult) "on" else "off"}", close = false) {
-                        lockAdult = !lockAdult; store.setFlag("lockAdult", lockAdult)
-                    })
-                    if (unlocked) add(MenuItem("Lock now") { unlocked = false })
-                    add(MenuItem("Remove PIN") { requirePin("Enter PIN to remove it") { store.clearPin(); hasPin = false } })
-                }
-                add(MenuItem("Vance TV ${BuildConfig.VERSION_NAME}", enabled = false) {})
-                add(MenuItem("Close") {})
-            },
-        ) { showSettings = false }
+                }),
+            )),
+            SettingSection("About", "Version and updates.", listOf(
+                SettingItem("Vance TV", BuildConfig.VERSION_NAME, "Version of this app", enabled = false),
+                SettingItem("Check for updates", null, "Install the newest version from GitHub", action = { updateOpen = true; checkUpdates(false) }),
+            )),
+        )
     }
+
 
     if (accountOpen) {
         val a = account
@@ -1775,6 +1812,7 @@ private fun App() {
     val screenId = when {
         showSplash -> 0
         provider == null || showSetup -> 1
+        showSettings -> 12
         searchOpen -> 2
         pickerOpen -> 3
         multiOpen -> 4
@@ -1875,6 +1913,8 @@ private fun App() {
     ) {
         if (showSplash) {
             SplashScreen()
+        } else if (showSettings && provider != null && !showSetup) {
+            SettingsScreen(settingSections) { showSettings = false; listVersion++ }
         } else if (provider == null || showSetup) {
             LoginScreen(
                 useUrl, urlText, server, user, pass, showPass, status, busy,
@@ -2032,33 +2072,34 @@ private fun App() {
                     )
                 }
         } else {
-            Row(Modifier.fillMaxSize()) {
-                IconRail(
-                    items = listOf(
-                        RailItem(RailIconType.HOME, "Home", tab == Tab.HOME),
-                        RailItem(RailIconType.SEARCH, "Search", false),
-                        RailItem(RailIconType.LIVE, "Live TV", tab == Tab.LIVE),
-                        RailItem(RailIconType.MOVIES, "Movies", tab == Tab.MOVIES),
-                        RailItem(RailIconType.SERIES, "Series", tab == Tab.SERIES),
-                        RailItem(RailIconType.FAVORITES, "Favorites", tab == Tab.FAVORITES),
-                        RailItem(RailIconType.GUIDE, "Guide", false),
-                        RailItem(RailIconType.SETTINGS, "Settings", false),
-                    ).filter { !kidsMode || it.icon != RailIconType.SEARCH },
-                    modifier = Modifier.width(if (!Dimens.railLabels) 64.dp else if (isTv) 84.dp else 66.dp),
-                ) { icon ->
-                    when (icon) {
-                        RailIconType.HOME -> openTab(Tab.HOME)
-                        RailIconType.SEARCH -> { searchQuery = ""; searchResults = emptyMap(); searchOpen = true }
-                        RailIconType.LIVE -> openTab(Tab.LIVE)
-                        RailIconType.MOVIES -> openTab(Tab.MOVIES)
-                        RailIconType.SERIES -> openTab(Tab.SERIES)
-                        RailIconType.FAVORITES -> openTab(Tab.FAVORITES)
-                        RailIconType.GUIDE ->
-                            if (guideChannels.isNotEmpty()) guideOpen = true else { openTab(Tab.LIVE); wantGuide = true }
-                        RailIconType.SETTINGS -> openSettings()
-                    }
+            val navItems = listOf(
+                RailItem(RailIconType.HOME, "Home", tab == Tab.HOME),
+                RailItem(RailIconType.SEARCH, "Search", false),
+                RailItem(RailIconType.LIVE, "Live TV", tab == Tab.LIVE),
+                RailItem(RailIconType.MOVIES, "Movies", tab == Tab.MOVIES),
+                RailItem(RailIconType.SERIES, "Series", tab == Tab.SERIES),
+                RailItem(RailIconType.FAVORITES, "Favorites", tab == Tab.FAVORITES),
+                RailItem(RailIconType.GUIDE, "Guide", false),
+                RailItem(RailIconType.SETTINGS, "Settings", false),
+            ).filter { !kidsMode || it.icon != RailIconType.SEARCH }
+            val onNav: (RailIconType) -> Unit = { icon ->
+                when (icon) {
+                    RailIconType.HOME -> openTab(Tab.HOME)
+                    RailIconType.SEARCH -> { searchQuery = ""; searchResults = emptyMap(); searchOpen = true }
+                    RailIconType.LIVE -> openTab(Tab.LIVE)
+                    RailIconType.MOVIES -> openTab(Tab.MOVIES)
+                    RailIconType.SERIES -> openTab(Tab.SERIES)
+                    RailIconType.FAVORITES -> openTab(Tab.FAVORITES)
+                    RailIconType.GUIDE ->
+                        if (guideChannels.isNotEmpty()) guideOpen = true else { openTab(Tab.LIVE); wantGuide = true }
+                    RailIconType.SETTINGS -> openSettings()
                 }
-                Box(Modifier.weight(1f).fillMaxHeight()) {
+            }
+            val railWidth = if (!Dimens.railLabels) 64.dp else if (isTv) 84.dp else 66.dp
+            Box(Modifier.fillMaxSize()) {
+                if (Dimens.topNav) TopNav(navItems, Modifier.align(Alignment.TopStart), onNav)
+                else IconRail(navItems, Modifier.align(Alignment.TopStart).width(railWidth), onNav)
+                Box(Modifier.fillMaxSize().padding(start = if (Dimens.topNav) 0.dp else railWidth, top = if (Dimens.topNav) 60.dp else 0.dp)) {
                     when (tab) {
                         Tab.HOME -> {
                             val cont = recentEntries.filter { visible(it) }.take(20)
@@ -2093,7 +2134,7 @@ private fun App() {
                                 }, w)
                             }.filter { it.second.isNotEmpty() }
                             LazyColumn(Modifier.fillMaxSize(), state = homeState, contentPadding = PaddingValues(bottom = 40.dp)) {
-                                if (hero != null) item {
+                                if (hero != null && Dimens.homeHero) item {
                                     HeroBanner(
                                         hero, if (cont.contains(hero)) "Continue watching" else "Featured",
                                         titleFor(hero), subFor(hero),
@@ -2104,7 +2145,7 @@ private fun App() {
                                         backdrop = heroBackdrop,
                                     )
                                 }
-                                item {
+                                if (Dimens.homeChips) item {
                                     androidx.compose.foundation.lazy.LazyRow(
                                         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp),
                                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2118,7 +2159,7 @@ private fun App() {
                                     ShelfRow(
                                         title, items, wide, ::titleFor, ::subFor, ::progressOf, ::isFav,
                                         onLongClick = { menuTarget = MenuTarget.EntryT(it) }, onOpen = ::onEntry,
-                                        firstFocus = if (hero == null && i == 0) Modifier.focusRequester(firstItem) else Modifier,
+                                        firstFocus = if ((hero == null || !Dimens.homeHero) && i == 0) Modifier.focusRequester(firstItem) else Modifier,
                                         onFocusEntry = { pendingHome = it },
                                     )
                                 }

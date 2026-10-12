@@ -135,7 +135,7 @@ private fun GuideRow(
 ) {
     val end = windowStart + WINDOW
     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(CHANNEL_COL).height(56.dp).padding(end = 4.dp)) {
+        Box(Modifier.width(CHANNEL_COL).height(Dimens.guideRow).padding(end = 4.dp)) {
             FocusCard(firstFocus.fillMaxSize(), RoundedCornerShape(8.dp), 1.0f, 2.dp, onClick = onPlay) { focused ->
                 Row(
                     Modifier.fillMaxSize()
@@ -160,7 +160,7 @@ private fun GuideRow(
                     if (e <= s) continue
                     if (s > cursor) Spacer(Modifier.width(msToDp(s - cursor)))
                     val match = query.length >= 2 && p.title.contains(query, ignoreCase = true)
-                    Box(Modifier.width(maxOf(msToDp(e - s), 48.dp)).height(56.dp).padding(end = 2.dp)) {
+                    Box(Modifier.width(maxOf(msToDp(e - s), 48.dp)).height(Dimens.guideRow).padding(end = 2.dp)) {
                         val airing = p.start <= now && now < p.stop
                         val past = p.stop <= now
                         FocusCard(Modifier.fillMaxSize(), RoundedCornerShape(6.dp), 1.0f, 2.dp, onClick = {
