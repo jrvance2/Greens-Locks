@@ -36,10 +36,7 @@ object Updater {
         return conn.getInputStream().bufferedReader().use { it.readText() }
     }
 
-    private fun parse(json: JSONObject, prefix: String): Release? {
-        val tag = json.optString("tag_name")
-        if (!tag.startsWith(prefix)) return null
-        val build = tag.removePrefix(prefix).toIntOrNull() ?: return null
+    private fun apkOf(json: JSONObject, build: Int): Release? {
         val assets = json.optJSONArray("assets") ?: return null
         for (i in 0 until assets.length()) {
             val a = assets.getJSONObject(i)
@@ -48,11 +45,19 @@ object Updater {
         return null
     }
 
-    /** Stable app: the newest normal release. Beta app: the newest "beta-N" pre-release (stable users never see these). */
+    /**
+     * Stable app: the newest normal release ("build-N"). Beta app: the single moving "beta-latest" pre-release, whose
+     * title ends in "build N" (GitHub's public release list hides pre-releases, but a tag lookup works). Stable users never see it.
+     */
     suspend fun latest(): Release? = withContext(Dispatchers.IO) {
-        if (!BuildConfig.BETA) return@withContext parse(JSONObject(get("$REPO/latest")), "build-")
-        val arr = org.json.JSONArray(get("$REPO?per_page=15"))
-        (0 until arr.length()).asSequence().mapNotNull { parse(arr.getJSONObject(it), "beta-") }.maxByOrNull { it.build }
+        if (!BuildConfig.BETA) {
+            val json = JSONObject(get("$REPO/latest"))
+            val build = json.optString("tag_name").removePrefix("build-").toIntOrNull() ?: return@withContext null
+            return@withContext apkOf(json, build)
+        }
+        val json = JSONObject(get("$REPO/tags/beta-latest"))
+        val build = Regex("build (\\d+)").find(json.optString("name"))?.groupValues?.get(1)?.toIntOrNull() ?: return@withContext null
+        apkOf(json, build)
     }
 
     suspend fun download(ctx: Context, url: String, onProgress: (Int) -> Unit): File = withContext(Dispatchers.IO) {

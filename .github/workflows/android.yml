@@ -50,7 +50,9 @@ jobs:
         run: |
           cp app/build/outputs/apk/release/app-release.apk VanceTV.apk
           if [ "$TAG_PREFIX" = "beta" ]; then
-            gh release create "beta-${{ github.run_number }}" VanceTV.apk \
+            # One moving pre-release: GitHub's public release list hides pre-releases, but a tag lookup works.
+            gh release delete beta-latest --yes --cleanup-tag --repo "${{ github.repository }}" || true
+            gh release create "beta-latest" VanceTV.apk \
               --repo "${{ github.repository }}" --target "${{ github.sha }}" \
               --title "Vance TV Beta build ${{ github.run_number }}" \
               --notes "Automated beta build of ${{ github.sha }}" --prerelease
