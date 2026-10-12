@@ -69,6 +69,7 @@ object Dimens {
     var skipBack by mutableIntStateOf(10)
     var skipFwd by mutableIntStateOf(10)
     var keepFrame by mutableStateOf(true)
+    var ambient by mutableStateOf(true)
     var askProfile by mutableStateOf(true)
     /** 0 = full animations, 1 = reduced, 2 = off. */
     var animLevel by mutableIntStateOf(0)

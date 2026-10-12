@@ -1702,6 +1702,7 @@ private fun App() {
                     choices = ANIM_NAMES, selected = animIdx, onPick = { i -> animIdx = i; store.setInt("anim", i); applyNow(); layoutTick++ }),
                 toggle("Focus glow", "A soft glow around the selected card", Dimens.glow) { setLayoutFlag("glow", !Dimens.glow) },
                 toggle("Banner color from poster", "Tint the Home banner with the poster's colors", Dimens.heroTint) { setLayoutFlag("heroTint", !Dimens.heroTint) },
+                toggle("Ambient background", "Slowly moving color glow behind Home", Dimens.ambient) { setLayoutFlag("ambient", !Dimens.ambient) },
                 toggle("Navigation sounds", "A soft click as you move around (uses your TV's system sounds)", Dimens.sounds) { setLayoutFlag("sounds", !Dimens.sounds) },
             )),
             SettingSection("Layout", "How the app is arranged.", listOf(
@@ -1995,7 +1996,11 @@ private fun App() {
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { alpha = if (screenId == 0) 1f else if (shownScreen == screenId) screenAlpha.value else 0.25f }
+            .graphicsLayer {
+                val a = if (screenId == 0) 1f else if (shownScreen == screenId) screenAlpha.value else 0.25f
+                alpha = a
+                if (Dimens.animLevel == 0) { val k = 0.985f + 0.015f * ((a - 0.25f) / 0.75f).coerceIn(0f, 1f); scaleX = k; scaleY = k }
+            }
             .onPreviewKeyEvent { ev ->
                 if (!fullscreen || ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 infoTick++
@@ -2271,7 +2276,15 @@ private fun App() {
                         Tab.HOME -> {
                             val cont = recentEntries.filter { visible(it) }.take(20)
                             val favs = favoriteEntries.filter { visible(it) }.take(20)
-                            val baseHero = cont.firstOrNull { it.kind != Kind.LIVE } ?: cont.firstOrNull()
+                            val heroPool = (cont.filter { it.kind != Kind.LIVE }.take(3) +
+                                homeShelves.flatMap { it.items }.filter { it.kind != Kind.LIVE && visible(it) }.take(12)).distinctBy { it.key() }.take(6)
+                            var heroIdx by remember { mutableIntStateOf(0) }
+                            LaunchedEffect(heroPool.size, focusedHome == null) {
+                                while (focusedHome == null && heroPool.size > 1 && Dimens.homeHero && Dimens.animLevel != 2) {
+                                    delay(9000); heroIdx = (heroIdx + 1) % heroPool.size
+                                }
+                            }
+                            val baseHero = heroPool.getOrNull(heroIdx) ?: cont.firstOrNull()
                                 ?: homeShelves.firstNotNullOfOrNull { s -> s.items.firstOrNull { visible(it) } }
                             val hero = focusedHome ?: baseHero
                             val shelves = buildList {
@@ -2291,7 +2304,7 @@ private fun App() {
                                 heroBackdrop = ""
                                 val h = hero ?: return@LaunchedEffect
                                 if (tmdbKey.isNotBlank() && h.kind != Kind.LIVE) {
-                                    delay(if (focusedHome == null) 2500L else 450L) // let the library and posters load first
+                                    delay(if (focusedHome == null && heroIdx == 0) 2500L else 450L) // let the library and posters load first
                                     heroBackdrop = runCatching { Tmdb.backdropFor(tmdbKey, h.title, h.kind == Kind.SERIES) }.getOrDefault("")
                                 }
                             }
@@ -2306,6 +2319,7 @@ private fun App() {
                                     }
                                 }, w)
                             }.filter { it.second.isNotEmpty() }
+                            if (Dimens.ambient) AmbientBackground(Modifier.fillMaxSize())
                             LazyColumn(Modifier.fillMaxSize(), state = homeState, contentPadding = PaddingValues(bottom = 40.dp)) {
                                 if (hero != null && Dimens.homeHero) item {
                                     HeroBanner(
@@ -2316,6 +2330,7 @@ private fun App() {
                                         onPlay = { if (hero.kind == Kind.SERIES) onEntry(hero) else playNow(hero, true) },
                                         onDetails = { onEntry(hero) },
                                         backdrop = heroBackdrop,
+                                        dots = if (focusedHome == null) heroPool.size else 0, dot = heroIdx,
                                     )
                                 }
                                 if (Dimens.homeChips) item {

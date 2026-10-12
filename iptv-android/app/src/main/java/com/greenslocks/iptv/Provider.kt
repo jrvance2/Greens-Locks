@@ -206,7 +206,8 @@ class XtreamProvider(
                 out += Entry(
                     Kind.EPISODE, o.optString("id"), label,
                     o.optString("container_extension").ifEmpty { "mp4" },
-                    icon = series.icon, season = season.toIntOrNull() ?: 0, parent = series.title, series = series.id,
+                    icon = o.optJSONObject("info")?.optString("movie_image").orEmpty().ifBlank { series.icon },
+                    season = season.toIntOrNull() ?: 0, parent = series.title, series = series.id,
                 )
             }
         }

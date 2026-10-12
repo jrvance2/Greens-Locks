@@ -20,6 +20,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.shadow
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,58 +63,19 @@ data class RailItem(val icon: RailIconType, val label: String, val selected: Boo
 
 @Composable
 fun RailIcon(type: RailIconType, color: Color, modifier: Modifier = Modifier.size(26.dp)) {
-    Canvas(modifier) {
-        val w = size.width
-        val h = size.height
+    androidx.compose.material3.Icon(
         when (type) {
-            RailIconType.HOME -> drawPath(
-                Path().apply {
-                    moveTo(w * 0.08f, h * 0.5f); lineTo(w * 0.5f, h * 0.1f); lineTo(w * 0.92f, h * 0.5f)
-                    lineTo(w * 0.8f, h * 0.5f); lineTo(w * 0.8f, h * 0.9f); lineTo(w * 0.2f, h * 0.9f)
-                    lineTo(w * 0.2f, h * 0.5f); close()
-                }, color,
-            )
-            RailIconType.SEARCH -> {
-                drawCircle(color, radius = w * 0.29f, center = Offset(w * 0.42f, h * 0.42f), style = Stroke(width = w * 0.12f))
-                drawLine(color, Offset(w * 0.64f, h * 0.64f), Offset(w * 0.92f, h * 0.92f), strokeWidth = w * 0.13f)
-            }
-            RailIconType.LIVE -> {
-                drawCircle(color, radius = w * 0.4f, style = Stroke(width = w * 0.11f))
-                drawCircle(color, radius = w * 0.16f)
-            }
-            RailIconType.MOVIES -> drawPath(
-                Path().apply { moveTo(w * 0.25f, h * 0.1f); lineTo(w * 0.25f, h * 0.9f); lineTo(w * 0.92f, h * 0.5f); close() }, color,
-            )
-            RailIconType.SERIES -> for (k in 0..2) {
-                drawRoundRect(
-                    color, topLeft = Offset(w * (0.08f + k * 0.08f), h * (0.1f + k * 0.3f)),
-                    size = Size(w * 0.7f, h * 0.22f), cornerRadius = CornerRadius(w * 0.06f),
-                )
-            }
-            RailIconType.FAVORITES -> drawPath(
-                Path().apply {
-                    for (i in 0 until 10) {
-                        val r = if (i % 2 == 0) w * 0.46f else w * 0.2f
-                        val ang = Math.toRadians((-90 + i * 36).toDouble())
-                        val x = w * 0.5f + (r * Math.cos(ang)).toFloat()
-                        val y = h * 0.54f + (r * Math.sin(ang)).toFloat()
-                        if (i == 0) moveTo(x, y) else lineTo(x, y)
-                    }
-                    close()
-                }, color,
-            )
-            RailIconType.GUIDE -> for (gx in 0..2) for (gy in 0..2) {
-                drawRoundRect(
-                    color, topLeft = Offset(w * (0.06f + gx * 0.32f), h * (0.06f + gy * 0.32f)),
-                    size = Size(w * 0.24f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f),
-                )
-            }
-            RailIconType.SETTINGS -> {
-                drawCircle(color, radius = w * 0.38f, style = Stroke(width = w * 0.16f))
-                drawCircle(color, radius = w * 0.12f)
-            }
-        }
-    }
+            RailIconType.HOME -> androidx.compose.material.icons.Icons.Rounded.Home
+            RailIconType.SEARCH -> androidx.compose.material.icons.Icons.Rounded.Search
+            RailIconType.LIVE -> androidx.compose.material.icons.Icons.Rounded.LiveTv
+            RailIconType.MOVIES -> androidx.compose.material.icons.Icons.Rounded.Movie
+            RailIconType.SERIES -> androidx.compose.material.icons.Icons.Rounded.VideoLibrary
+            RailIconType.FAVORITES -> androidx.compose.material.icons.Icons.Rounded.Star
+            RailIconType.GUIDE -> androidx.compose.material.icons.Icons.Rounded.CalendarViewDay
+            RailIconType.SETTINGS -> androidx.compose.material.icons.Icons.Rounded.Settings
+        },
+        null, modifier, tint = color,
+    )
 }
 
 @Composable
@@ -262,6 +225,8 @@ fun HeroBanner(
     onPlay: () -> Unit,
     onDetails: () -> Unit,
     backdrop: String = "",
+    dots: Int = 0,
+    dot: Int = 0,
 ) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var tint by remember(entry.icon) { mutableStateOf<Color?>(null) }
@@ -303,9 +268,15 @@ fun HeroBanner(
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 if (subtitle.isNotEmpty()) Text(subtitle, color = Palette.muted, modifier = Modifier.padding(top = 4.dp))
+                if (dots > 1) Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(dots) { i ->
+                        val w by androidx.compose.animation.core.animateDpAsState(if (i == dot) 22.dp else 6.dp, tween(Motion.MED), label = "dot")
+                        Box(Modifier.size(width = w, height = 6.dp).clip(RoundedCornerShape(50)).background(if (i == dot) Palette.accent else Color.White.copy(alpha = 0.3f)))
+                    }
+                }
                 Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ActionButton("▶  Play", playFocus, onClick = onPlay)
-                    if (canOpenDetails) ActionButton("Details", primary = false, onClick = onDetails)
+                    ActionButton("Play", playFocus, icon = Icons.Rounded.PlayArrow, onClick = onPlay)
+                    if (canOpenDetails) ActionButton("Details", primary = false, icon = Icons.Rounded.Info, onClick = onDetails)
                 }
             }
             Artwork(
@@ -382,18 +353,19 @@ fun DetailScreen(
                 Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (entry.kind == Kind.MOVIE) {
                         ActionButton(
-                            if (resumeMs > 15_000) "▶  Resume ${fmtTime(resumeMs)}" else "▶  Play",
-                            Modifier.focusRequester(first), onClick = onPlay,
+                            if (resumeMs > 15_000) "Resume ${fmtTime(resumeMs)}" else "Play",
+                            Modifier.focusRequester(first), icon = Icons.Rounded.PlayArrow, onClick = onPlay,
                         )
-                        if (resumeMs > 15_000) ActionButton("Restart", primary = false, onClick = onRestart)
+                        if (resumeMs > 15_000) ActionButton("Restart", primary = false, icon = Icons.Rounded.Replay, onClick = onRestart)
                     }
                     ActionButton(
-                        if (isFavorite) "★  Favorited" else "☆  Add to favorites", primary = false,
+                        if (isFavorite) "Favorited" else "Add to favorites", primary = false,
+                        icon = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
                         modifier = if (entry.kind == Kind.MOVIE) Modifier else Modifier.focusRequester(first),
                         onClick = onFavorite,
                     )
-                    ActionButton(if (inMyList) "✓  In My list" else "+  My list", primary = false, onClick = onMyList)
-                    if (!detail?.trailer.isNullOrBlank()) ActionButton("▶  Trailer", primary = false, onClick = onTrailer)
+                    ActionButton(if (inMyList) "In My list" else "My list", primary = false, icon = if (inMyList) Icons.Rounded.Check else Icons.Rounded.Add, onClick = onMyList)
+                    if (!detail?.trailer.isNullOrBlank()) ActionButton("Trailer", primary = false, icon = Icons.Rounded.Movie, onClick = onTrailer)
                 }
                 if (entry.kind == Kind.SERIES) {
                     if (seasons.size > 1) {
@@ -409,14 +381,22 @@ fun DetailScreen(
                     LazyColumn(Modifier.weight(1f).padding(top = 8.dp)) {
                         itemsIndexed(episodes.filter { it.season == activeSeason }) { _, ep ->
                             val p = episodeProgress(ep)
-                            FocusCard(Modifier.fillMaxWidth().padding(vertical = 2.dp), RoundedCornerShape(10.dp), 1f, 2.dp, onClick = { onEpisode(ep) }) { focused ->
-                                Column(
+                            FocusCard(Modifier.fillMaxWidth().padding(vertical = 3.dp), RoundedCornerShape(12.dp), 1f, 2.dp, onClick = { onEpisode(ep) }) { focused ->
+                                Row(
                                     Modifier.fillMaxWidth()
                                         .background(if (focused) Palette.accent.copy(alpha = 0.22f) else Palette.surface)
-                                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(ep.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (p != null) ProgressLine(p, Modifier.fillMaxWidth().padding(top = 6.dp))
+                                    Box(Modifier.size(width = 124.dp, height = 70.dp).clip(RoundedCornerShape(8.dp))) {
+                                        Artwork(ep.icon, ep.title, Modifier.fillMaxSize())
+                                        Box(Modifier.align(Alignment.Center).size(30.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
+                                            androidx.compose.material3.Icon(Icons.Rounded.PlayArrow, null, Modifier.size(20.dp), tint = Color.White)
+                                        }
+                                        if (p != null) ProgressLine(p, Modifier.align(Alignment.BottomStart).fillMaxWidth())
+                                    }
+                                    Spacer(Modifier.width(14.dp))
+                                    Text(ep.title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                                 }
                             }
                         }
@@ -610,18 +590,25 @@ fun BoxScope.NextUpCard(title: String, secs: Int) {
 @Composable
 fun SplashScreen() {
     val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "splash")
-    val pulse by t.animateFloat(
-        0.55f, 1f,
-        androidx.compose.animation.core.infiniteRepeatable(
-            androidx.compose.animation.core.tween(900, easing = Motion.ease),
-            androidx.compose.animation.core.RepeatMode.Reverse,
-        ),
-        label = "pulse",
+    val sweep by t.animateFloat(
+        -0.4f, 1.0f,
+        androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1300, easing = androidx.compose.animation.core.LinearEasing)),
+        label = "sweep",
     )
-    Box(Modifier.fillMaxSize().background(Palette.bg), contentAlignment = Alignment.Center) {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val pop by androidx.compose.animation.core.animateFloatAsState(
+        if (shown) 1f else 0.86f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 180f), label = "pop",
+    )
+    val fade by androidx.compose.animation.core.animateFloatAsState(if (shown) 1f else 0f, tween(500), label = "fade")
+    Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(accentWash(0.22f), Palette.bg))), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            BrandWordmark(34.sp, Modifier.graphicsLayer { alpha = pulse })
-            Text("Loading your library\u2026", color = Palette.muted, modifier = Modifier.padding(top = 18.dp))
+            BrandWordmark(38.sp, Modifier.graphicsLayer { scaleX = pop; scaleY = pop; alpha = fade })
+            Box(Modifier.padding(top = 30.dp).size(width = 220.dp, height = 4.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.12f))) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(0.4f).graphicsLayer { translationX = sweep * 220.dp.toPx() }
+                    .background(Brush.horizontalGradient(listOf(Color.Transparent, Palette.accent, Palette.accent2, Color.Transparent))))
+            }
+            Text("Loading your library\u2026", color = Palette.muted, modifier = Modifier.padding(top = 16.dp))
         }
     }
 }

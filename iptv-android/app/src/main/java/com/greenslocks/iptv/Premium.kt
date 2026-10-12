@@ -13,6 +13,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -119,4 +123,33 @@ fun ProfilePicker(profiles: List<Profile>, kids: (Int) -> Boolean, activeId: Int
             }
         }
     }
+}
+
+/** Slowly drifting pools of the accent colors behind Home. Only the layer moves, so it costs almost nothing. */
+@Composable
+fun AmbientBackground(modifier: Modifier = Modifier) {
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "ambient")
+    val drift by t.animateFloat(
+        0f, 1f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(40_000, easing = androidx.compose.animation.core.LinearEasing),
+            androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "drift",
+    )
+    val a = Palette.accent
+    val b = Palette.accent2
+    Box(
+        modifier
+            .graphicsLayer {
+                scaleX = 1.35f; scaleY = 1.35f
+                translationX = (drift - 0.5f) * size.width * 0.16f
+                translationY = (0.5f - drift) * size.height * 0.12f
+            }
+            .drawBehind {
+                drawRect(Brush.radialGradient(listOf(a.copy(alpha = 0.16f), Color.Transparent), Offset(size.width * 0.15f, size.height * 0.25f), size.minDimension * 0.75f))
+                drawRect(Brush.radialGradient(listOf(b.copy(alpha = 0.13f), Color.Transparent), Offset(size.width * 0.85f, size.height * 0.7f), size.minDimension * 0.8f))
+                drawRect(Brush.radialGradient(listOf(a.copy(alpha = 0.08f), Color.Transparent), Offset(size.width * 0.55f, size.height * 1.0f), size.minDimension * 0.6f))
+            },
+    )
 }

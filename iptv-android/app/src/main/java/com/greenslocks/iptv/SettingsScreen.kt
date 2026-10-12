@@ -38,6 +38,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.coroutines.delay
 
 /**
@@ -57,6 +61,17 @@ data class SettingItem(
     val onPick: (Int) -> Unit = {},
     val action: () -> Unit = {},
 )
+
+private fun sectionIcon(title: String): ImageVector = when {
+    title.startsWith("Appearance") -> Icons.Rounded.Palette
+    title.startsWith("Layout") -> Icons.Rounded.Dashboard
+    title.startsWith("Playback") -> Icons.Rounded.PlayCircle
+    title.startsWith("Guide") -> Icons.Rounded.Schedule
+    title.startsWith("Profiles") -> Icons.Rounded.Person
+    title.startsWith("Data") -> Icons.Rounded.CloudSync
+    title.startsWith("About") -> Icons.Rounded.Info
+    else -> Icons.Rounded.Tune
+}
 
 data class SettingSection(val title: String, val hint: String, val items: List<SettingItem>)
 
@@ -96,6 +111,8 @@ fun SettingsScreen(sections: List<SettingSection>, onClose: () -> Unit) {
                             .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        Icon(sectionIcon(s.title), null, Modifier.size(22.dp), tint = if (focused || i == sel) Palette.accent else Palette.muted)
+                        Spacer(Modifier.width(12.dp))
                         Text(
                             s.title, style = MaterialTheme.typography.titleSmall,
                             color = if (focused || i == sel) Palette.text else Palette.muted,
@@ -115,7 +132,11 @@ fun SettingsScreen(sections: List<SettingSection>, onClose: () -> Unit) {
             ) {
                 item {
                     Column(Modifier.padding(top = 26.dp, bottom = 10.dp)) {
-                        Text(section.title, style = MaterialTheme.typography.headlineMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(sectionIcon(section.title), null, Modifier.size(30.dp), tint = Palette.accent)
+                            Spacer(Modifier.width(12.dp))
+                            Text(section.title, style = MaterialTheme.typography.headlineMedium)
+                        }
                         if (section.hint.isNotBlank()) Text(section.hint, color = Palette.muted, modifier = Modifier.padding(top = 4.dp))
                     }
                 }

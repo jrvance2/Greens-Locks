@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
@@ -53,6 +54,41 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.animation.Crossfade
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+
+/** A diagonal band of light that sweeps across a card once each time it gains focus. */
+@Composable
+fun Sheen(focused: Boolean, modifier: Modifier = Modifier) {
+    if (Dimens.animLevel != 0) return
+    val p = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(focused) {
+        p.snapTo(0f)
+        if (focused) p.animateTo(1f, tween(800, easing = Motion.ease))
+    }
+    if (p.value <= 0f || p.value >= 1f) return
+    Box(
+        modifier.fillMaxSize().drawBehind {
+            val x = (p.value * 1.7f - 0.45f) * size.width
+            drawRect(
+                Brush.linearGradient(
+                    listOf(Color.Transparent, Color.White.copy(alpha = 0.20f), Color.Transparent),
+                    start = Offset(x, 0f), end = Offset(x + size.width * 0.38f, size.height * 0.38f),
+                )
+            )
+        }
+    )
+}
+
+/** Small "4K" tag in a card corner. */
+@Composable
+fun BoxScope.QualityTag(title: String) {
+    if (qualityBadge(title) != "4K") return
+    Text(
+        "4K", Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(5.dp))
+            .background(Color.Black.copy(alpha = 0.62f)).border(1.dp, Palette.accent.copy(alpha = 0.8f), RoundedCornerShape(5.dp))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+    )
+}
 
 /** Focusable, clickable surface that scales up and gets an accent ring when focused. */
 @OptIn(ExperimentalFoundationApi::class)
@@ -231,8 +267,10 @@ fun PosterCard(
     onClick: () -> Unit,
 ) {
     Column(if (width != null) Modifier.width(width) else Modifier.fillMaxWidth()) {
-        FocusCard(modifier.fillMaxWidth().aspectRatio(2f / 3f), onLongClick = onLongClick, onFocus = onFocus, onClick = onClick) {
+        FocusCard(modifier.fillMaxWidth().aspectRatio(2f / 3f), onLongClick = onLongClick, onFocus = onFocus, onClick = onClick) { focused ->
             Artwork(icon, title, Modifier.fillMaxSize(), fit)
+            QualityTag(title)
+            Sheen(focused)
             Box(Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(Dimens.corner)))
             if (favorite) {
                 Text("★", Modifier.align(Alignment.TopEnd).padding(6.dp), color = Palette.accent)
@@ -266,8 +304,9 @@ fun WideCard(
     FocusCard(
         (if (width != null) modifier.width(width) else modifier.fillMaxWidth()).aspectRatio(16f / 9f),
         onLongClick = onLongClick, onFocus = onFocus, onClick = onClick,
-    ) {
+    ) { focused ->
         Artwork(icon, title, Modifier.fillMaxSize(), fit, Alignment.TopCenter)
+        Sheen(focused)
         Box(
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.88f))
@@ -341,15 +380,26 @@ fun Chip(text: String, selected: Boolean, modifier: Modifier = Modifier, onLongC
 }
 
 @Composable
-fun ActionButton(text: String, modifier: Modifier = Modifier, primary: Boolean = true, enabled: Boolean = true, onClick: () -> Unit) {
+fun ActionButton(
+    text: String, modifier: Modifier = Modifier, primary: Boolean = true, enabled: Boolean = true,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null, onClick: () -> Unit,
+) {
     FocusCard(modifier, RoundedCornerShape(10.dp), 1.05f, 2.dp, onClick = { if (enabled) onClick() }) {
-        Text(
-            text, maxLines = 1,
-            modifier = Modifier.background(if (primary) Palette.accent else Palette.surfaceHi)
-                .padding(horizontal = 22.dp, vertical = 11.dp),
-            color = if (enabled) Color.White else Palette.muted,
-            style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
-        )
+        Row(
+            Modifier.background(if (primary) Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2)) else Brush.horizontalGradient(listOf(Palette.surfaceHi, Palette.surfaceHi)))
+                .padding(horizontal = 20.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp), tint = if (enabled) Color.White else Palette.muted)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                text, maxLines = 1,
+                color = if (enabled) Color.White else Palette.muted,
+                style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+            )
+        }
     }
 }
 

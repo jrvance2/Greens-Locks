@@ -33,6 +33,7 @@ object LayoutPrefs {
         Dimens.skipBack = SKIP_SECS[store.int("skipBack", 1).coerceIn(0, SKIP_SECS.size - 1)]
         Dimens.skipFwd = SKIP_SECS[store.int("skipFwd", 1).coerceIn(0, SKIP_SECS.size - 1)]
         Dimens.keepFrame = store.flag("keepFrame", true)
+        Dimens.ambient = store.flag("ambient", true)
         Dimens.askProfile = store.flag("askProfile", true)
     }
 }
