@@ -58,6 +58,11 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.audio.AudioCapabilities
@@ -85,6 +90,7 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("tmdb_key")?.let { store.setGString("tmdbKey", it) }
         applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0), store.int("ui", 1))
         Dimens.railLabels = store.flag("railLabels", true)
+        Net.setMode(store.int("uaMode", 0))
         Dimens.sounds = store.flag("sounds", false)
         pendingLaunch.value = intent.getStringExtra("play_entry")
         setContent { IptvTheme { App() } }
@@ -257,6 +263,7 @@ private fun App() {
     var kidsCats by remember { mutableStateOf(store.list("kidsCats").toSet()) }
     var pickerKids by remember { mutableStateOf(false) }
     var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
+    var uaMode by remember { mutableIntStateOf(store.int("uaMode", 0)) }
     var audioMode by remember { mutableIntStateOf(store.int("audioMode", if (store.flag("pcmAudio", false)) 2 else 0)) }
     var trackPanelOpen by remember { mutableStateOf(false) }
     var trackTick by remember { mutableIntStateOf(0) }
@@ -351,44 +358,63 @@ private fun App() {
     var guideOpen by remember { mutableStateOf(false) }
 
     // ---- player
-    val player = remember(bufferMode, audioMode) {
+    // Smart Auto: if the TV can't take Dolby passthrough but can take multichannel sound, decode 5.1 on the device.
+    val smartMode = remember {
+        runCatching {
+            val caps = AudioCapabilities.getCapabilities(ctx, androidx.media3.common.AudioAttributes.DEFAULT, null)
+            when {
+                caps.supportsEncoding(AudioFormat.ENCODING_AC3) || caps.supportsEncoding(AudioFormat.ENCODING_E_AC3) -> 0
+                caps.maxChannelCount >= 6 -> 3
+                else -> 0
+            }
+        }.getOrDefault(0)
+    }
+    val effectiveAudio = if (audioMode == 0) smartMode else audioMode
+    val player = remember(bufferMode, effectiveAudio, uaMode) {
+        Net.setMode(uaMode)
         val lc = when (bufferMode) {
             0 -> DefaultLoadControl.Builder().setBufferDurationsMs(10_000, 20_000, 1_500, 3_000)
             2 -> DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 3_000, 6_000)
             else -> DefaultLoadControl.Builder()
         }.build()
-        val builder = ExoPlayer.Builder(ctx).setLoadControl(lc)
-        if (audioMode != 0) {
-            // 1 = tell the player the TV can take 5.1/7.1 and Dolby/DTS passthrough even if it reports stereo only;
-            // 2 = decode everything to plain stereo on the device.
-            val caps = when (audioMode) {
-                1 -> AudioCapabilities(
-                    intArrayOf(
-                        AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_AC3, AudioFormat.ENCODING_E_AC3,
-                        AudioFormat.ENCODING_E_AC3_JOC, AudioFormat.ENCODING_DTS, AudioFormat.ENCODING_DTS_HD,
-                    ),
-                    8,
-                )
-                // 3 = decode with the built-in FFmpeg decoder and send plain 5.1/7.1 PCM to the TV.
-                3 -> AudioCapabilities(intArrayOf(AudioFormat.ENCODING_PCM_16BIT), 8)
-                else -> AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES
-            }
-            builder.setRenderersFactory(object : DefaultRenderersFactory(ctx) {
-                init {
-                    if (audioMode == 3) {
-                        setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-                        setEnableDecoderFallback(true)
-                    }
-                }
-                override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
-                    DefaultAudioSink.Builder(context)
-                        .setAudioCapabilities(caps)
-                        .setEnableFloatOutput(enableFloatOutput)
-                        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                        .build()
-            })
+        // OkHttp for the network (connection reuse, redirects, IPv4 first); file:// recordings still work.
+        val http = OkHttpDataSource.Factory(Net.client).setUserAgent(Net.userAgent)
+        val extractors = DefaultExtractorsFactory().setTsExtractorFlags(
+            DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS
+        )
+        // 1 = tell the player the TV can take 5.1/7.1 and Dolby/DTS passthrough even if it reports stereo only;
+        // 2 = decode everything to plain stereo; 3 = FFmpeg software decoder sending plain 5.1/7.1 PCM.
+        val caps: AudioCapabilities? = when (effectiveAudio) {
+            1 -> AudioCapabilities(
+                intArrayOf(
+                    AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_AC3, AudioFormat.ENCODING_E_AC3,
+                    AudioFormat.ENCODING_E_AC3_JOC, AudioFormat.ENCODING_DTS, AudioFormat.ENCODING_DTS_HD,
+                ),
+                8,
+            )
+            3 -> AudioCapabilities(intArrayOf(AudioFormat.ENCODING_PCM_16BIT), 8)
+            2 -> AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES
+            else -> null
         }
-        builder.build()
+        val renderers = object : DefaultRenderersFactory(ctx) {
+            init {
+                // If a device can't decode a format or profile (some Dolby Vision, odd HEVC), try another decoder.
+                setEnableDecoderFallback(true)
+                if (effectiveAudio == 3) setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            }
+            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink? =
+                if (caps == null) super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
+                else DefaultAudioSink.Builder(context)
+                    .setAudioCapabilities(caps)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .build()
+        }
+        ExoPlayer.Builder(ctx)
+            .setLoadControl(lc)
+            .setRenderersFactory(renderers)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(ctx, http), extractors))
+            .build()
     }
     val currentNow by rememberUpdatedState(current)
     fun variantsFor(e: Entry) = variantsOf(e, entries + allLive.orEmpty(), store.string("pref_${normName(e.title)}"))
@@ -1572,10 +1598,13 @@ private fun App() {
                 add(MenuItem("Up/Down in player: ${if (zapStrip) "channel strip" else "switch channel"}", close = false) {
                     zapStrip = !zapStrip; store.setFlag("zapStrip", zapStrip)
                 })
-                add(MenuItem("Audio output: ${mapOf(0 to "Auto", 1 to "Surround (passthrough)", 3 to "Surround (software decoder)", 2 to "Stereo (compatible)")[audioMode]}", close = false) {
+                add(MenuItem("Audio output: ${mapOf(0 to (if (smartMode == 3) "Auto (software 5.1)" else "Auto"), 1 to "Surround (passthrough)", 3 to "Surround (software decoder)", 2 to "Stereo (compatible)")[audioMode]}", close = false) {
                     val order = listOf(0, 1, 3, 2)
                     audioMode = order[(order.indexOf(audioMode).coerceAtLeast(0) + 1) % order.size]
                     store.setInt("audioMode", audioMode)
+                })
+                add(MenuItem("Network identity: ${Net.UA_NAMES[uaMode]}  — try VLC or TiviMate if a provider blocks or throttles streams", close = false) {
+                    uaMode = (uaMode + 1) % Net.UA_NAMES.size; store.setInt("uaMode", uaMode); Net.setMode(uaMode)
                 })
                 add(MenuItem("Merge duplicate channels (HD/4K/backup): ${if (mergeDupes) "on" else "off"}", close = false) {
                     mergeDupes = !mergeDupes; store.setFlag("mergeDupes", mergeDupes)

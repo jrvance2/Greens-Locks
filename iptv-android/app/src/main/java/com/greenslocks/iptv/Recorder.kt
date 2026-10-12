@@ -106,6 +106,7 @@ class RecordService : Service() {
         val url = intent.getStringExtra("url") ?: return START_NOT_STICKY
         val name = intent.getStringExtra("name").orEmpty()
         val dur = intent.getLongExtra("dur", 3_600_000L)
+        Net.setMode(getSharedPreferences("iptv", MODE_PRIVATE).getInt("uaMode", 0))
         goForeground(name)
         val stamp = SimpleDateFormat("MMdd_HHmm", Locale.US).format(Date())
         val safe = name.replace(Regex("[^A-Za-z0-9._-]+"), "_").take(60)
@@ -114,7 +115,7 @@ class RecordService : Service() {
         Recorder.active[id] = state
         thread(name = "record-$id") {
             runCatching {
-                val conn = (URL(url).openConnection() as HttpURLConnection).apply { connectTimeout = 15000; readTimeout = 30000 }
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply { setRequestProperty("User-Agent", Net.userAgent); connectTimeout = 15000; readTimeout = 30000 }
                 val end = System.currentTimeMillis() + dur
                 conn.inputStream.use { input ->
                     file.outputStream().use { out ->

@@ -45,7 +45,7 @@ private fun JsonReader.str(): String =
     if (peek() == JsonToken.NULL) { nextNull(); "" } else nextString()
 
 private fun httpGet(url: String): String {
-    val conn = URL(url).openConnection().apply { connectTimeout = 15000; readTimeout = 60000 }
+    val conn = URL(url).openConnection().apply { setRequestProperty("User-Agent", Net.userAgent); connectTimeout = 15000; readTimeout = 60000 }
     return conn.getInputStream().bufferedReader().use { it.readText() }
 }
 
@@ -114,7 +114,7 @@ class XtreamProvider(
     }
 
     override suspend fun allLive(): List<Entry> = withContext(Dispatchers.IO) {
-        val conn = URL(api("get_live_streams")).openConnection().apply { connectTimeout = 15000; readTimeout = 120000 }
+        val conn = URL(api("get_live_streams")).openConnection().apply { setRequestProperty("User-Agent", Net.userAgent); connectTimeout = 15000; readTimeout = 120000 }
         JsonReader(conn.getInputStream().bufferedReader()).use { r ->
             val out = ArrayList<Entry>()
             r.beginArray()
@@ -146,7 +146,7 @@ class XtreamProvider(
             Kind.SERIES -> "get_series"
             Kind.EPISODE -> return@withContext emptyMap<String, Int>()
         }
-        val conn = URL(api(action)).openConnection().apply { connectTimeout = 15000; readTimeout = 180000 }
+        val conn = URL(api(action)).openConnection().apply { setRequestProperty("User-Agent", Net.userAgent); connectTimeout = 15000; readTimeout = 180000 }
         JsonReader(conn.getInputStream().bufferedReader()).use { r ->
             val out = HashMap<String, Int>()
             r.beginArray()
@@ -256,7 +256,7 @@ class XtreamProvider(
             Kind.EPISODE -> return@withContext
         }
         val iconKey = if (kind == Kind.SERIES) "cover" else "stream_icon"
-        val conn = URL(api(action)).openConnection().apply { connectTimeout = 15000; readTimeout = 180000 }
+        val conn = URL(api(action)).openConnection().apply { setRequestProperty("User-Agent", Net.userAgent); connectTimeout = 15000; readTimeout = 180000 }
         JsonReader(conn.getInputStream().bufferedReader()).use { r ->
             r.beginArray()
             while (r.hasNext()) {
@@ -359,7 +359,7 @@ suspend fun connectProvider(input: String): Provider {
     val url = input.trim()
     xtreamFromUrl(url)?.let { it.verify(); return it }
     val playlist = withContext(Dispatchers.IO) {
-        val conn = URL(url).openConnection().apply { connectTimeout = 15000; readTimeout = 60000 }
+        val conn = URL(url).openConnection().apply { setRequestProperty("User-Agent", Net.userAgent); connectTimeout = 15000; readTimeout = 60000 }
         conn.getInputStream().bufferedReader().use { M3uParser.parse(it.lineSequence()) }
     }
     return M3uProvider(playlist.channels)
