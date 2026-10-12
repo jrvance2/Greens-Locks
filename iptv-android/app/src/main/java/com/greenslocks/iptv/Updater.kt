@@ -25,24 +25,34 @@ sealed interface UpdateState {
 
 /** Checks this project's GitHub releases for a newer build and installs it over the current app. */
 object Updater {
-    private const val API = "https://api.github.com/repos/jrvance2/Greens-Locks/releases/latest"
+    private const val REPO = "https://api.github.com/repos/jrvance2/Greens-Locks/releases"
 
-    suspend fun latest(): Release? = withContext(Dispatchers.IO) {
-        val conn = URL(API).openConnection().apply {
+    private fun get(url: String): String {
+        val conn = URL(url).openConnection().apply {
             connectTimeout = 15000; readTimeout = 20000
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("User-Agent", "VanceTV-Updater")
         }
-        val json = JSONObject(conn.getInputStream().bufferedReader().use { it.readText() })
-        val build = json.optString("tag_name").substringAfter("build-", "").toIntOrNull() ?: return@withContext null
-        val assets = json.optJSONArray("assets") ?: return@withContext null
+        return conn.getInputStream().bufferedReader().use { it.readText() }
+    }
+
+    private fun parse(json: JSONObject, prefix: String): Release? {
+        val tag = json.optString("tag_name")
+        if (!tag.startsWith(prefix)) return null
+        val build = tag.removePrefix(prefix).toIntOrNull() ?: return null
+        val assets = json.optJSONArray("assets") ?: return null
         for (i in 0 until assets.length()) {
             val a = assets.getJSONObject(i)
-            if (a.optString("name").endsWith(".apk")) {
-                return@withContext Release(build, json.optString("name"), a.optString("browser_download_url"))
-            }
+            if (a.optString("name").endsWith(".apk")) return Release(build, json.optString("name"), a.optString("browser_download_url"))
         }
-        null
+        return null
+    }
+
+    /** Stable app: the newest normal release. Beta app: the newest "beta-N" pre-release (stable users never see these). */
+    suspend fun latest(): Release? = withContext(Dispatchers.IO) {
+        if (!BuildConfig.BETA) return@withContext parse(JSONObject(get("$REPO/latest")), "build-")
+        val arr = org.json.JSONArray(get("$REPO?per_page=15"))
+        (0 until arr.length()).asSequence().mapNotNull { parse(arr.getJSONObject(it), "beta-") }.maxByOrNull { it.build }
     }
 
     suspend fun download(ctx: Context, url: String, onProgress: (Int) -> Unit): File = withContext(Dispatchers.IO) {

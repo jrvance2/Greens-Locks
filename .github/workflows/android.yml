@@ -17,6 +17,14 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.9 }
+      - name: Pick the channel
+        run: |
+          # A commit message containing [beta] builds the beta channel (installs beside the stable app, own update feed).
+          if [[ "${{ contains(github.event.head_commit.message, '[beta]') }}" == "true" ]]; then
+            echo "BETA_FLAG=-Pbeta=true" >> "$GITHUB_ENV"; echo "TAG_PREFIX=beta" >> "$GITHUB_ENV"; echo "Beta channel"
+          else
+            echo "BETA_FLAG=" >> "$GITHUB_ENV"; echo "TAG_PREFIX=build" >> "$GITHUB_ENV"; echo "Stable channel"
+          fi
       - name: Prepare signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.VANCETV_KEYSTORE_BASE64 }}
@@ -29,8 +37,8 @@ jobs:
             echo "No signing secret set: using a temporary key (uninstall the old app before installing)"
           fi
       - name: Run unit tests
-        run: gradle testReleaseUnitTest --no-daemon -Pvc=${{ github.run_number }}
-      - run: gradle assembleRelease --no-daemon -Pvc=${{ github.run_number }}
+        run: gradle testReleaseUnitTest --no-daemon -Pvc=${{ github.run_number }} $BETA_FLAG
+      - run: gradle assembleRelease --no-daemon -Pvc=${{ github.run_number }} $BETA_FLAG
         env:
           VANCETV_STORE_PASSWORD: ${{ secrets.VANCETV_STORE_PASSWORD }}
           VANCETV_KEY_ALIAS: ${{ secrets.VANCETV_KEY_ALIAS }}
@@ -41,10 +49,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp app/build/outputs/apk/release/app-release.apk VanceTV.apk
-          gh release create "build-${{ github.run_number }}" VanceTV.apk \
-            --repo "${{ github.repository }}" --target "${{ github.sha }}" \
-            --title "Vance TV build ${{ github.run_number }}" \
-            --notes "Automated build of ${{ github.sha }}" --latest
+          if [ "$TAG_PREFIX" = "beta" ]; then
+            gh release create "beta-${{ github.run_number }}" VanceTV.apk \
+              --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+              --title "Vance TV Beta build ${{ github.run_number }}" \
+              --notes "Automated beta build of ${{ github.sha }}" --prerelease
+          else
+            gh release create "build-${{ github.run_number }}" VanceTV.apk \
+              --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+              --title "Vance TV build ${{ github.run_number }}" \
+              --notes "Automated build of ${{ github.sha }}" --latest
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: vancetv-apk
