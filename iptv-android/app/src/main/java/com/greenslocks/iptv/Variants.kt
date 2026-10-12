@@ -10,13 +10,18 @@ fun normName(title: String): String {
     return n.ifEmpty { title.lowercase() }
 }
 
+private val rx4k = Regex("""\b(4k|uhd)\b""")
+private val rxFhd = Regex("""\b(fhd|1080p?)\b""")
+private val rxHd = Regex("""\b(hd|720p?)\b""")
+private val rxSd = Regex("""\b(sd|576p?)\b""")
+
 fun qualityScore(title: String): Int {
     val t = title.lowercase()
     return when {
-        Regex("""\b(4k|uhd)\b""").containsMatchIn(t) -> 4
-        Regex("""\b(fhd|1080p?)\b""").containsMatchIn(t) -> 3
-        Regex("""\b(hd|720p?)\b""").containsMatchIn(t) -> 2
-        Regex("""\b(sd|576p?)\b""").containsMatchIn(t) -> 0
+        rx4k.containsMatchIn(t) -> 4
+        rxFhd.containsMatchIn(t) -> 3
+        rxHd.containsMatchIn(t) -> 2
+        rxSd.containsMatchIn(t) -> 0
         else -> 1
     }
 }

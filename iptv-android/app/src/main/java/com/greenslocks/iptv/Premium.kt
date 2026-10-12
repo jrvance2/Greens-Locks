@@ -54,12 +54,16 @@ fun MetaChips(meta: String, title: String, modifier: Modifier = Modifier) {
     }
 }
 
+private val q4k = Regex("\\b(4K|UHD|2160P?)\\b")
+private val qFhd = Regex("\\b(FHD|1080P?)\\b")
+private val qHd = Regex("\\b(HD|720P?)\\b")
+
 fun qualityBadge(title: String): String? {
     val t = title.uppercase()
     return when {
-        Regex("\\b(4K|UHD|2160P?)\\b").containsMatchIn(t) -> "4K"
-        Regex("\\b(FHD|1080P?)\\b").containsMatchIn(t) -> "FHD"
-        Regex("\\b(HD|720P?)\\b").containsMatchIn(t) -> "HD"
+        q4k.containsMatchIn(t) -> "4K"
+        qFhd.containsMatchIn(t) -> "FHD"
+        qHd.containsMatchIn(t) -> "HD"
         else -> null
     }
 }
@@ -130,7 +134,7 @@ fun ProfilePicker(profiles: List<Profile>, kids: (Int) -> Boolean, activeId: Int
 fun AmbientBackground(modifier: Modifier = Modifier) {
     val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "ambient")
     val drift by t.animateFloat(
-        0f, 1f,
+        0f, if (Dimens.animLevel == 0) 1f else 0f,
         androidx.compose.animation.core.infiniteRepeatable(
             androidx.compose.animation.core.tween(40_000, easing = androidx.compose.animation.core.LinearEasing),
             androidx.compose.animation.core.RepeatMode.Reverse,
@@ -143,6 +147,8 @@ fun AmbientBackground(modifier: Modifier = Modifier) {
         modifier
             .graphicsLayer {
                 scaleX = 1.35f; scaleY = 1.35f
+                // Draw the glow once into a texture and just slide it, instead of re-filling gradients every frame.
+                compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
                 translationX = (drift - 0.5f) * size.width * 0.16f
                 translationY = (0.5f - drift) * size.height * 0.12f
             }

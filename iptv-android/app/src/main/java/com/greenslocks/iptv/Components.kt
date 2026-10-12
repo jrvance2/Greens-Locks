@@ -55,25 +55,24 @@ import androidx.compose.animation.Crossfade
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 
-/** A diagonal band of light that sweeps across a card once each time it gains focus. */
+/** A diagonal band of light that sweeps across a card once each time it gains focus. Costs nothing on unfocused cards. */
 @Composable
 fun Sheen(focused: Boolean, modifier: Modifier = Modifier) {
-    if (Dimens.animLevel != 0) return
+    if (!focused || Dimens.animLevel != 0) return
     val p = remember { androidx.compose.animation.core.Animatable(0f) }
-    LaunchedEffect(focused) {
-        p.snapTo(0f)
-        if (focused) p.animateTo(1f, tween(800, easing = Motion.ease))
-    }
-    if (p.value <= 0f || p.value >= 1f) return
+    LaunchedEffect(Unit) { p.animateTo(1f, tween(800, easing = Motion.ease)) }
     Box(
         modifier.fillMaxSize().drawBehind {
-            val x = (p.value * 1.7f - 0.45f) * size.width
-            drawRect(
-                Brush.linearGradient(
-                    listOf(Color.Transparent, Color.White.copy(alpha = 0.20f), Color.Transparent),
-                    start = Offset(x, 0f), end = Offset(x + size.width * 0.38f, size.height * 0.38f),
+            val v = p.value
+            if (v > 0f && v < 1f) {
+                val x = (v * 1.7f - 0.45f) * size.width
+                drawRect(
+                    Brush.linearGradient(
+                        listOf(Color.Transparent, Color.White.copy(alpha = 0.20f), Color.Transparent),
+                        start = Offset(x, 0f), end = Offset(x + size.width * 0.38f, size.height * 0.38f),
+                    )
                 )
-            )
+            }
         }
     )
 }
@@ -81,7 +80,8 @@ fun Sheen(focused: Boolean, modifier: Modifier = Modifier) {
 /** Small "4K" tag in a card corner. */
 @Composable
 fun BoxScope.QualityTag(title: String) {
-    if (qualityBadge(title) != "4K") return
+    val is4k = remember(title) { qualityBadge(title) == "4K" }
+    if (!is4k) return
     Text(
         "4K", Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(5.dp))
             .background(Color.Black.copy(alpha = 0.62f)).border(1.dp, Palette.accent.copy(alpha = 0.8f), RoundedCornerShape(5.dp))
@@ -115,16 +115,21 @@ fun FocusCard(
         label = "focusScale",
     )
     val glowOn = level == 0 && scaleOnFocus != 1f && Dimens.glow
-    val glowDp by animateDpAsState(if (focused && glowOn) 18.dp else 0.dp, tween(Motion.MED, easing = Motion.ease), label = "glow")
+    val glow by animateFloatAsState(if (focused && glowOn) 18f else 0f, tween(Motion.MED, easing = Motion.ease), label = "glow")
     Box(
         modifier
             .then(
-                if (grows) Modifier.zIndex(if (focused) 1f else 0f).graphicsLayer { scaleX = scale; scaleY = scale }
-                else Modifier
-            )
-            .then(
-                if (glowDp > 0.5.dp)
-                    Modifier.shadow(glowDp, shape, clip = false, ambientColor = Palette.accent, spotColor = Palette.accent)
+                if (grows || glowOn)
+                    Modifier.then(if (grows) Modifier.zIndex(if (focused) 1f else 0f) else Modifier).graphicsLayer {
+                        if (grows) { scaleX = scale; scaleY = scale }
+                        if (glowOn) {
+                            shadowElevation = glow.dp.toPx()
+                            this.shape = shape
+                            clip = false
+                            ambientShadowColor = Palette.accent
+                            spotShadowColor = Palette.accent
+                        }
+                    }
                 else Modifier
             )
             // Only draw the ring while focused: a 0.dp border still paints a hairline.
@@ -155,7 +160,7 @@ fun Artwork(
     BoxWithConstraints(modifier.background(brush), contentAlignment = Alignment.Center) {
         val fs = (minOf(maxWidth, maxHeight).value * 0.36f).coerceIn(13f, 44f).sp
         Text(
-            initialsOf(title), fontSize = fs, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.85f), maxLines = 1,
+            remember(title) { initialsOf(title) }, fontSize = fs, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.85f), maxLines = 1,
         )
         if (url.isNotBlank()) {
             val ctx = LocalContext.current
@@ -171,8 +176,11 @@ fun Artwork(
 }
 
 /** "BBC One" -> "BO", "ESPN" -> "E"; shown when a channel or title has no artwork. */
+private val initialsLead = Regex("^\\s*(?:[|\\[(][^|\\])]{1,12}[|\\])]\\s*)+")
+private val initialsSplit = Regex("[^\\p{L}\\p{N}]+")
+
 fun initialsOf(title: String): String {
-    val words = title.replace(Regex("^\\s*(?:[|\\[(][^|\\])]{1,12}[|\\])]\\s*)+"), "").split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }
+    val words = title.replace(initialsLead, "").split(initialsSplit).filter { it.isNotEmpty() }
     return when {
         words.isEmpty() -> title.trim().take(1).uppercase()
         words.size == 1 -> words[0].take(if (words[0].length <= 4) words[0].length else 2).uppercase()

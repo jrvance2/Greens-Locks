@@ -2330,7 +2330,7 @@ private fun AppState.AppBody() {
                             val cont = recentEntries.filter { visible(it) }.take(20)
                             val favs = favoriteEntries.filter { visible(it) }.take(20)
                             val heroPool = (cont.filter { it.kind != Kind.LIVE }.take(3) +
-                                homeShelves.flatMap { it.items }.filter { it.kind != Kind.LIVE && visible(it) }.take(12)).distinctBy { it.key() }.take(6)
+                                homeShelves.asSequence().flatMap { it.items.asSequence() }.filter { it.kind != Kind.LIVE && visible(it) }.take(12).toList()).distinctBy { it.key() }.take(6)
                             var heroIdx by remember { mutableIntStateOf(0) }
                             LaunchedEffect(heroPool.size, focusedHome == null) {
                                 while (focusedHome == null && heroPool.size > 1 && Dimens.homeHero && Dimens.animLevel != 2) {
@@ -2345,7 +2345,7 @@ private fun AppState.AppBody() {
                                 val seed = cont.firstOrNull { it.kind == Kind.MOVIE || it.kind == Kind.SERIES || it.kind == Kind.EPISODE }
                                 if (seed != null && seed.cat.isNotBlank()) {
                                     val seen = cont.map { it.key() }.toSet()
-                                    val like = homeShelves.flatMap { it.items }.filter { it.cat == seed.cat && it.kind != Kind.LIVE && it.key() !in seen && visible(it) }.distinctBy { it.key() }.take(20)
+                                    val like = homeShelves.asSequence().flatMap { it.items.asSequence() }.filter { it.cat == seed.cat && it.kind != Kind.LIVE && it.key() !in seen && visible(it) }.distinctBy { it.key() }.take(20).toList()
                                     if (like.size >= 4) add(Triple("Because you watched ${if (seed.parent.isNotBlank()) seed.parent else seed.title}", like, false))
                                 }
                                 if (favs.isNotEmpty()) add(Triple("Favorites", favs, true))
