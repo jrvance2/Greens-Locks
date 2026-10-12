@@ -202,180 +202,192 @@ private fun PlayerSurface(
 @Composable
 private fun App() {
     val ctx = LocalContext.current
-    val prefs = remember { ctx.getSharedPreferences("iptv", Context.MODE_PRIVATE) }
-    val store = remember { Store(prefs) }
     val scope = rememberCoroutineScope()
-    val isTv = remember {
-        (ctx.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).currentModeType ==
-            Configuration.UI_MODE_TYPE_TELEVISION
-    }
+    val state = remember { AppState(ctx, scope) }
+    state.AppBody()
+}
+
+/** All of the app's screen state in one object, so the main composable stays under the JVM method size limit. */
+private class AppState(val ctx: Context, val scope: kotlinx.coroutines.CoroutineScope) {
+    val prefs: android.content.SharedPreferences = ctx.getSharedPreferences("iptv", Context.MODE_PRIVATE)
+    val store = Store(prefs)
+    val isTv: Boolean =
+        (ctx.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+
+    var profiles by mutableStateOf(store.profiles())
+    var activeProfile by mutableIntStateOf(store.active)
+    var showWho by mutableStateOf(Dimens.askProfile && store.profiles().size > 1)
+    var urlText by mutableStateOf(store.url())
+    val initial = xtreamFromUrl(urlText)
+    var server by mutableStateOf(initial?.base.orEmpty())
+    var user by mutableStateOf(initial?.user.orEmpty())
+    var pass by mutableStateOf(initial?.pass.orEmpty())
+    var useUrl by mutableStateOf(urlText.isNotBlank() && initial == null)
+    var showPass by mutableStateOf(false)
+    var provider by mutableStateOf<Provider?>(null)
+    var showSetup by mutableStateOf(true)
+    var status by mutableStateOf("Enter your login and press Connect")
+    var busy by mutableStateOf(false)
+    var tab by mutableStateOf(Tab.HOME)
+    val catCache = mutableStateMapOf<Tab, List<Category>>()
+    var category by mutableStateOf<Category?>(null)
+    var entries by mutableStateOf(emptyList<Entry>())
+    var series by mutableStateOf<Entry?>(null)
+    var episodes by mutableStateOf(emptyList<Entry>())
+    var query by mutableStateOf("")
+    var listVersion by mutableIntStateOf(0)
+    var allLive by mutableStateOf<List<Entry>?>(null)
+    var detailEntry by mutableStateOf<Entry?>(null)
+    var detail by mutableStateOf<Detail?>(null)
+    var homeShelves by mutableStateOf(emptyList<Shelf>())
+    var wantGuide by mutableStateOf(false)
+    var pinnedCats by mutableStateOf(store.list("pinCats").toSet())
+    var counts by mutableStateOf(emptyMap<Kind, Map<String, Int>>())
+    val countsLoading = mutableSetOf<Kind>()
+    var catFilter by mutableStateOf("")
+    var catRegion by mutableStateOf("*all")
+    var pickerOpen by mutableStateOf(false)
+    var pickerTab by mutableIntStateOf(0)
+    var appearanceOpen by mutableStateOf(false)
+    var accentIdx by mutableIntStateOf(store.int("accent", 0))
+    var bgIdx by mutableIntStateOf(store.int("bg", 0))
+    var cardIdx by mutableIntStateOf(store.int("cards", 1))
+    var textIdx by mutableIntStateOf(store.int("text", 1))
+    var uiIdx by mutableIntStateOf(store.int("ui", 1))
+    var animIdx by mutableIntStateOf(store.int("anim", 0))
+    var startIdx by mutableIntStateOf(store.int("start", 1))
+    var startTick by mutableIntStateOf(0)
+    var panelOpen by mutableStateOf(false)
+    var panelMode by mutableIntStateOf(0)
+    var panelCat by mutableStateOf<Category?>(null)
+    var panelChannels by mutableStateOf(emptyList<Entry>())
+    var autoNext by mutableStateOf(store.flag("autoNext", true))
+    var matchFps by mutableStateOf(store.flag("matchFps", true))
+    var subSize by mutableIntStateOf(store.int("subSize", 1))
+    var liveTs by mutableStateOf(store.flag("liveTs", false))
+    var sortMode by mutableIntStateOf(store.int("sortMode", 0))
+    var myList by mutableStateOf(store.list("mylist"))
+    var groups by mutableStateOf(store.map("groups"))
+    var reminders by mutableStateOf(store.list("reminders"))
+    var dueReminder by mutableStateOf<Reminder?>(null)
+    var remindersOpen by mutableStateOf(false)
+    var kidsMode by mutableStateOf(store.isKids(store.active))
+    var kidsCats by mutableStateOf(store.list("kidsCats").toSet())
+    var pickerKids by mutableStateOf(false)
+    var epgShift by mutableIntStateOf(store.int("epgShift", 0))
+    var uaMode by mutableIntStateOf(store.int("uaMode", 0))
+    var audioMode by mutableIntStateOf(store.int("audioMode", if (store.flag("pcmAudio", false)) 2 else 0))
+    var xmltvUrl by mutableStateOf(store.string("xmltvUrl").orEmpty())
+    var xmltvFirst by mutableStateOf(store.flag("xmltvFirst", false))
+    var xmltvTick by mutableIntStateOf(0)
+    var xmltvBusy by mutableStateOf(false)
+    var chShifts by mutableStateOf(store.map("chShift"))
+    var seriesRules by mutableStateOf(store.list("seriesRules"))
+    var seriesOpen by mutableStateOf(false)
+    var audioLang by mutableIntStateOf(store.int("audioLang", 0))
+    var subLang by mutableIntStateOf(store.int("subLang", 0))
+    var layoutTick by mutableIntStateOf(0)
+    var trackPanelOpen by mutableStateOf(false)
+    var trackTick by mutableIntStateOf(0)
+    val trackFocus = FocusRequester()
+    var zapStrip by mutableStateOf(store.flag("zapStrip", false))
+    var stripIdx by mutableStateOf<Int?>(null)
+    var stripTick by mutableIntStateOf(0)
+    var bootDone by mutableStateOf(false)
+    var sawBusy by mutableStateOf(false)
+    var focusedHome by mutableStateOf<Entry?>(null)
+    var pendingHome by mutableStateOf<Entry?>(null)
+    var shownScreen by mutableIntStateOf(-1)
+    val screenAlpha = Animatable(0f)
+    var homeFilter by mutableIntStateOf(0)
+    var heroBackdrop by mutableStateOf("")
+    var mergeDupes by mutableStateOf(store.flag("mergeDupes", true))
+    var recOpen by mutableStateOf(false)
+    var recFile by mutableStateOf<java.io.File?>(null)
+    var programTarget by mutableStateOf<Pair<Entry, Programme>?>(null)
+    var multiList by mutableStateOf(emptyList<Entry>())
+    var multiOpen by mutableStateOf(false)
+    var kidsLimit by mutableIntStateOf(store.int("kidsLimit", 0))
+    val dayKey = { java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date()) }
+    var kidsUsed by mutableLongStateOf(store.long("kidsUsed_${dayKey()}"))
+    var timesUp by mutableStateOf(false)
+    var syncServer by mutableStateOf<SyncServer?>(null)
+    var syncInfo by mutableStateOf<PairInfo?>(null)
+    var failoverTick by mutableIntStateOf(0)
+    var triedTick by mutableIntStateOf(0)
+    val triedVariants = mutableSetOf<String>()
+    var tmdbKey by mutableStateOf(store.gString("tmdbKey").orEmpty())
+    var favTab by mutableIntStateOf(0)
+    var sleepIdx by mutableIntStateOf(0)
+    var sleepAt by mutableLongStateOf(0L)
+    var nextUp by mutableStateOf<Entry?>(null)
+    var nextUpSecs by mutableIntStateOf(0)
+    var nextUpGo by mutableStateOf(false)
+    var endedTick by mutableIntStateOf(0)
+    var searchOpen by mutableStateOf(false)
+    var searchQuery by mutableStateOf("")
+    var searchResults by mutableStateOf(emptyMap<Kind, List<Entry>>())
+    var indexStatus by mutableStateOf<String?>(null)
+    var accountOpen by mutableStateOf(false)
+    var account by mutableStateOf<AccountInfo?>(null)
+    var updateState by mutableStateOf<UpdateState>(UpdateState.Idle)
+    var updateOpen by mutableStateOf(false)
+    var pairInfo by mutableStateOf<PairInfo?>(null)
+    var current by mutableStateOf<Entry?>(null)
+    var fullscreen by mutableStateOf(false)
+    var epg by mutableStateOf(emptyList<Programme>())
+    var now by mutableLongStateOf(System.currentTimeMillis())
+    var showInfo by mutableStateOf(false)
+    var infoTick by mutableIntStateOf(0)
+    var position by mutableLongStateOf(0L)
+    var duration by mutableLongStateOf(0L)
+    var reloadTick by mutableIntStateOf(0)
+    var retries by mutableIntStateOf(0)
+    var playbackError by mutableStateOf<String?>(null)
+    var tracksTick by mutableIntStateOf(0)
+    var numBuffer by mutableStateOf("")
+    var pausedForDetail by mutableStateOf(false)
+    var pausedByNav by mutableStateOf(false)
+    val liveHistory = mutableListOf<Entry>()
+    var favorites by mutableStateOf(store.favorites())
+    var history by mutableStateOf(store.list("hist"))
+    var hiddenCats by mutableStateOf(store.list("hidCats").toSet())
+    var hiddenEntries by mutableStateOf(store.list("hidEntries").toSet())
+    var lockedCats by mutableStateOf(store.list("lockCats").toSet())
+    var renames by mutableStateOf(store.map("renames"))
+    var catOrder by mutableStateOf(store.map("catOrder"))
+    var sortAz by mutableStateOf(store.flag("sortAz", false))
+    var showHidden by mutableStateOf(store.flag("showHidden", false))
+    var lockAdult by mutableStateOf(store.flag("lockAdult", true))
+    var hasPin by mutableStateOf(store.hasPin())
+    var bufferMode by mutableIntStateOf(store.int("buffer", 1))
+    var resizeIdx by mutableIntStateOf(store.int("resize", 0).coerceIn(0, RESIZES.lastIndex))
+    var unlocked by mutableStateOf(false)
+    var menuTarget by mutableStateOf<MenuTarget?>(null)
+    var textPrompt by mutableStateOf<TextPrompt?>(null)
+    var showSettings by mutableStateOf(false)
+    var showOptions by mutableStateOf(false)
+    var pinRequest by mutableStateOf<PinRequest?>(null)
+    var pinError by mutableStateOf<String?>(null)
+    var pinWrongCount by mutableIntStateOf(0)
+    var guideOpen by mutableStateOf(false)
+    val firstItem = FocusRequester()
+    val rootFocus = FocusRequester()
+    val panelFocus = FocusRequester()
+}
+
+@Composable
+private fun AppState.AppBody() {
 
     // ---- connection / browsing state
-    var profiles by remember { mutableStateOf(store.profiles()) }
-    var activeProfile by remember { mutableIntStateOf(store.active) }
-    var showWho by remember { mutableStateOf(Dimens.askProfile && store.profiles().size > 1) }
-    var urlText by remember { mutableStateOf(store.url()) }
-    val initial = remember { xtreamFromUrl(urlText) }
-    var server by remember { mutableStateOf(initial?.base.orEmpty()) }
-    var user by remember { mutableStateOf(initial?.user.orEmpty()) }
-    var pass by remember { mutableStateOf(initial?.pass.orEmpty()) }
-    var useUrl by remember { mutableStateOf(urlText.isNotBlank() && initial == null) }
-    var showPass by remember { mutableStateOf(false) }
-    var provider by remember { mutableStateOf<Provider?>(null) }
-    var showSetup by remember { mutableStateOf(true) }
-    var status by remember { mutableStateOf("Enter your login and press Connect") }
-    var busy by remember { mutableStateOf(false) }
-    var tab by remember { mutableStateOf(Tab.HOME) }
-    val catCache = remember { mutableStateMapOf<Tab, List<Category>>() }
-    var category by remember { mutableStateOf<Category?>(null) }
-    var entries by remember { mutableStateOf(emptyList<Entry>()) }
-    var series by remember { mutableStateOf<Entry?>(null) }
-    var episodes by remember { mutableStateOf(emptyList<Entry>()) }
-    var query by remember { mutableStateOf("") }
-    var listVersion by remember { mutableIntStateOf(0) }
-    var allLive by remember { mutableStateOf<List<Entry>?>(null) }
-    var detailEntry by remember { mutableStateOf<Entry?>(null) }
-    var detail by remember { mutableStateOf<Detail?>(null) }
-    var homeShelves by remember { mutableStateOf(emptyList<Shelf>()) }
-    var wantGuide by remember { mutableStateOf(false) }
-    var pinnedCats by remember { mutableStateOf(store.list("pinCats").toSet()) }
-    var counts by remember { mutableStateOf(emptyMap<Kind, Map<String, Int>>()) }
-    val countsLoading = remember { mutableSetOf<Kind>() }
-    var catFilter by remember { mutableStateOf("") }
-    var catRegion by remember { mutableStateOf("*all") }
-    var pickerOpen by remember { mutableStateOf(false) }
-    var pickerTab by remember { mutableIntStateOf(0) }
-    var appearanceOpen by remember { mutableStateOf(false) }
-    var accentIdx by remember { mutableIntStateOf(store.int("accent", 0)) }
-    var bgIdx by remember { mutableIntStateOf(store.int("bg", 0)) }
-    var cardIdx by remember { mutableIntStateOf(store.int("cards", 1)) }
-    var textIdx by remember { mutableIntStateOf(store.int("text", 1)) }
-    var uiIdx by remember { mutableIntStateOf(store.int("ui", 1)) }
-    var animIdx by remember { mutableIntStateOf(store.int("anim", 0)) }
-    var startIdx by remember { mutableIntStateOf(store.int("start", 1)) }
-    var startTick by remember { mutableIntStateOf(0) }
-    var panelOpen by remember { mutableStateOf(false) }
-    var panelMode by remember { mutableIntStateOf(0) }
-    var panelCat by remember { mutableStateOf<Category?>(null) }
-    var panelChannels by remember { mutableStateOf(emptyList<Entry>()) }
-    var autoNext by remember { mutableStateOf(store.flag("autoNext", true)) }
-    var matchFps by remember { mutableStateOf(store.flag("matchFps", true)) }
-    var subSize by remember { mutableIntStateOf(store.int("subSize", 1)) }
-    var liveTs by remember { mutableStateOf(store.flag("liveTs", false)) }
-    var sortMode by remember { mutableIntStateOf(store.int("sortMode", 0)) }
-    var myList by remember { mutableStateOf(store.list("mylist")) }
-    var groups by remember { mutableStateOf(store.map("groups")) }
-    var reminders by remember { mutableStateOf(store.list("reminders")) }
-    var dueReminder by remember { mutableStateOf<Reminder?>(null) }
-    var remindersOpen by remember { mutableStateOf(false) }
-    var kidsMode by remember { mutableStateOf(store.isKids(store.active)) }
-    var kidsCats by remember { mutableStateOf(store.list("kidsCats").toSet()) }
-    var pickerKids by remember { mutableStateOf(false) }
-    var epgShift by remember { mutableIntStateOf(store.int("epgShift", 0)) }
-    var uaMode by remember { mutableIntStateOf(store.int("uaMode", 0)) }
-    var audioMode by remember { mutableIntStateOf(store.int("audioMode", if (store.flag("pcmAudio", false)) 2 else 0)) }
-    var xmltvUrl by remember { mutableStateOf(store.string("xmltvUrl").orEmpty()) }
-    var xmltvFirst by remember { mutableStateOf(store.flag("xmltvFirst", false)) }
-    var xmltvTick by remember { mutableIntStateOf(0) }
-    var xmltvBusy by remember { mutableStateOf(false) }
     val xmltv = remember(activeProfile) { XmltvStore(ctx, activeProfile) }
-    var chShifts by remember { mutableStateOf(store.map("chShift")) }
-    var seriesRules by remember { mutableStateOf(store.list("seriesRules")) }
-    var seriesOpen by remember { mutableStateOf(false) }
-    var audioLang by remember { mutableIntStateOf(store.int("audioLang", 0)) }
-    var subLang by remember { mutableIntStateOf(store.int("subLang", 0)) }
-    var layoutTick by remember { mutableIntStateOf(0) }
-    var trackPanelOpen by remember { mutableStateOf(false) }
-    var trackTick by remember { mutableIntStateOf(0) }
-    val trackFocus = remember { FocusRequester() }
-    var zapStrip by remember { mutableStateOf(store.flag("zapStrip", false)) }
-    var stripIdx by remember { mutableStateOf<Int?>(null) }
-    var stripTick by remember { mutableIntStateOf(0) }
-    var bootDone by remember { mutableStateOf(false) }
-    var sawBusy by remember { mutableStateOf(false) }
-    var focusedHome by remember { mutableStateOf<Entry?>(null) }
-    var pendingHome by remember { mutableStateOf<Entry?>(null) }
-    var shownScreen by remember { mutableIntStateOf(-1) }
-    val screenAlpha = remember { Animatable(0f) }
-    var homeFilter by remember { mutableIntStateOf(0) }
-    var heroBackdrop by remember { mutableStateOf("") }
-    var mergeDupes by remember { mutableStateOf(store.flag("mergeDupes", true)) }
-    var recOpen by remember { mutableStateOf(false) }
-    var recFile by remember { mutableStateOf<java.io.File?>(null) }
-    var programTarget by remember { mutableStateOf<Pair<Entry, Programme>?>(null) }
-    var multiList by remember { mutableStateOf(emptyList<Entry>()) }
-    var multiOpen by remember { mutableStateOf(false) }
-    var kidsLimit by remember { mutableIntStateOf(store.int("kidsLimit", 0)) }
-    val dayKey = { java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date()) }
-    var kidsUsed by remember { mutableLongStateOf(store.long("kidsUsed_${dayKey()}")) }
-    var timesUp by remember { mutableStateOf(false) }
-    var syncServer by remember { mutableStateOf<SyncServer?>(null) }
-    var syncInfo by remember { mutableStateOf<PairInfo?>(null) }
-    var failoverTick by remember { mutableIntStateOf(0) }
-    var triedTick by remember { mutableIntStateOf(0) }
-    val triedVariants = remember { mutableSetOf<String>() }
-    var tmdbKey by remember { mutableStateOf(store.gString("tmdbKey").orEmpty()) }
-    var favTab by remember { mutableIntStateOf(0) }
-    var sleepIdx by remember { mutableIntStateOf(0) }
-    var sleepAt by remember { mutableLongStateOf(0L) }
-    var nextUp by remember { mutableStateOf<Entry?>(null) }
-    var nextUpSecs by remember { mutableIntStateOf(0) }
-    var nextUpGo by remember { mutableStateOf(false) }
-    var endedTick by remember { mutableIntStateOf(0) }
-    var searchOpen by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
-    var searchResults by remember { mutableStateOf(emptyMap<Kind, List<Entry>>()) }
-    var indexStatus by remember { mutableStateOf<String?>(null) }
-    var accountOpen by remember { mutableStateOf(false) }
-    var account by remember { mutableStateOf<AccountInfo?>(null) }
-    var updateState by remember { mutableStateOf<UpdateState>(UpdateState.Idle) }
-    var updateOpen by remember { mutableStateOf(false) }
-    var pairInfo by remember { mutableStateOf<PairInfo?>(null) }
     val index = remember(activeProfile) { SearchIndex(ctx, activeProfile) }
 
     // ---- playback state
-    var current by remember { mutableStateOf<Entry?>(null) }
-    var fullscreen by remember { mutableStateOf(false) }
-    var epg by remember { mutableStateOf(emptyList<Programme>()) }
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var showInfo by remember { mutableStateOf(false) }
-    var infoTick by remember { mutableIntStateOf(0) }
-    var position by remember { mutableLongStateOf(0L) }
-    var duration by remember { mutableLongStateOf(0L) }
-    var reloadTick by remember { mutableIntStateOf(0) }
-    var retries by remember { mutableIntStateOf(0) }
-    var playbackError by remember { mutableStateOf<String?>(null) }
-    var tracksTick by remember { mutableIntStateOf(0) }
-    var numBuffer by remember { mutableStateOf("") }
-    var pausedForDetail by remember { mutableStateOf(false) }
-    var pausedByNav by remember { mutableStateOf(false) }
-    val liveHistory = remember { mutableListOf<Entry>() }
 
     // ---- user data (per profile) and settings
-    var favorites by remember { mutableStateOf(store.favorites()) }
-    var history by remember { mutableStateOf(store.list("hist")) }
-    var hiddenCats by remember { mutableStateOf(store.list("hidCats").toSet()) }
-    var hiddenEntries by remember { mutableStateOf(store.list("hidEntries").toSet()) }
-    var lockedCats by remember { mutableStateOf(store.list("lockCats").toSet()) }
-    var renames by remember { mutableStateOf(store.map("renames")) }
-    var catOrder by remember { mutableStateOf(store.map("catOrder")) }
-    var sortAz by remember { mutableStateOf(store.flag("sortAz", false)) }
-    var showHidden by remember { mutableStateOf(store.flag("showHidden", false)) }
-    var lockAdult by remember { mutableStateOf(store.flag("lockAdult", true)) }
-    var hasPin by remember { mutableStateOf(store.hasPin()) }
-    var bufferMode by remember { mutableIntStateOf(store.int("buffer", 1)) }
-    var resizeIdx by remember { mutableIntStateOf(store.int("resize", 0).coerceIn(0, RESIZES.lastIndex)) }
-    var unlocked by remember { mutableStateOf(false) }
 
     // ---- dialogs
-    var menuTarget by remember { mutableStateOf<MenuTarget?>(null) }
-    var textPrompt by remember { mutableStateOf<TextPrompt?>(null) }
-    var showSettings by remember { mutableStateOf(false) }
-    var showOptions by remember { mutableStateOf(false) }
-    var pinRequest by remember { mutableStateOf<PinRequest?>(null) }
-    var pinError by remember { mutableStateOf<String?>(null) }
-    var pinWrongCount by remember { mutableIntStateOf(0) }
-    var guideOpen by remember { mutableStateOf(false) }
 
     // ---- player
     // Smart Auto: if the TV can't take Dolby passthrough but can take multichannel sound, decode 5.1 on the device.
@@ -1373,9 +1385,6 @@ private fun App() {
         if (wantGuide && tab == Tab.LIVE && entries.isNotEmpty()) { wantGuide = false; guideOpen = true }
     }
 
-    val firstItem = remember { FocusRequester() }
-    val rootFocus = remember { FocusRequester() }
-    val panelFocus = remember { FocusRequester() }
     val catListState = rememberLazyListState()
     LaunchedEffect(tab) { catListState.scrollToItem(0) }
     LaunchedEffect(tab, provider) { tab.kind()?.let { loadCounts(it) } }
