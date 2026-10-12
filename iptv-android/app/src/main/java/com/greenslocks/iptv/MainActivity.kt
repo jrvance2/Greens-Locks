@@ -395,7 +395,7 @@ private fun App() {
         val lc = when (bufferMode) {
             0 -> DefaultLoadControl.Builder().setBufferDurationsMs(10_000, 20_000, 1_500, 3_000)
             2 -> DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 3_000, 6_000)
-            else -> DefaultLoadControl.Builder()
+            else -> DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 50_000, 1_500, 4_000)
         }.build()
         // OkHttp for the network (connection reuse, redirects, IPv4 first); file:// recordings still work.
         val http = OkHttpDataSource.Factory(Net.client).setUserAgent(Net.userAgent)
@@ -463,7 +463,22 @@ private fun App() {
                 }
             }
 
+            private var stall: kotlinx.coroutines.Job? = null
+
+            override fun onRenderedFirstFrame() { Diag.firstFrame() }
+
             override fun onPlaybackStateChanged(state: Int) {
+                // Stuck buffering for a long time on live TV: quietly reconnect instead of waiting forever.
+                stall?.cancel()
+                if (state == Player.STATE_BUFFERING && currentNow?.kind == Kind.LIVE) {
+                    stall = scope.launch {
+                        delay(20_000)
+                        if (player.playbackState == Player.STATE_BUFFERING && currentNow?.kind == Kind.LIVE) {
+                            Diag.stalls++; Diag.reconnects++
+                            player.seekToDefaultPosition(); player.prepare()
+                        }
+                    }
+                }
                 if (state == Player.STATE_READY) {
                     retries = 0; playbackError = null
                     val c = currentNow
@@ -477,9 +492,14 @@ private fun App() {
             override fun onTracksChanged(tracks: Tracks) { tracksTick++ }
         }
         player.addListener(listener)
-        onDispose { player.removeListener(listener); player.release() }
+        val diag = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onDroppedVideoFrames(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) { Diag.dropped += droppedFrames }
+        }
+        player.addAnalyticsListener(diag)
+        onDispose { player.removeListener(listener); player.removeAnalyticsListener(diag); player.release() }
     }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
+    LaunchedEffect(Unit) { runCatching { BackgroundRefresh.apply(ctx, store.flag("bgRefresh", true)) } }
 
     SideEffect { PipState.ready = fullscreen && current != null }
     LaunchedEffect(now, reminders) {
@@ -879,7 +899,21 @@ private fun App() {
         store.setUrl(urlText)
         launchLoad {
             status = "Connecting…"
-            val p = connectProvider(urlText)
+            val ttl = { LIB_TTL_MS[store.int("libCache", 2).coerceIn(0, LIB_TTL_MS.lastIndex)] }
+            val xt = xtreamFromUrl(urlText)
+            val p: Provider = if (xt != null) {
+                val dir = libCacheDir(ctx, urlText)
+                // With a saved copy of the library, open straight onto it and check the login in the background.
+                if (ttl() > 0 && File(dir, "cat_LIVE").exists()) {
+                    scope.launch {
+                        runCatching { xt.verify() }.onFailure { e ->
+                            val m = e.message.orEmpty()
+                            if (m.contains("rejected") || m.startsWith("Account is")) { status = m; provider = null; showSetup = true }
+                        }
+                    }
+                } else xt.verify()
+                CachedProvider(xt, dir, ttl)
+            } else connectProvider(urlText)
             provider = p
             resetBrowsing()
             tab = Tab.HOME
@@ -1199,6 +1233,7 @@ private fun App() {
             }
         }
         if (!e.isCatchUp && !e.id.startsWith("file://")) pushHistory(e)
+        Diag.requested()
         player.setMediaItem(MediaItem.fromUri(if (e.id.startsWith("file://")) e.id else p.streamUrl(e)))
         player.prepare()
         if (e.kind != Kind.LIVE) {
@@ -1848,6 +1883,14 @@ private fun App() {
             }),
             SettingSection("Data & backup", "Account, backups and syncing between devices.", listOf(
                 SettingItem("Account & subscription", null, "Expiry, connections and server details", action = { account = null; accountOpen = true; loadAccount() }),
+                SettingItem("Library cache", LIB_TTL_NAMES[store.int("libCache", 2).coerceIn(0, 3)], "Keeps your channel lists on this device so the app opens instantly",
+                    choices = LIB_TTL_NAMES, selected = store.int("libCache", 2).coerceIn(0, 3), onPick = { i -> store.setInt("libCache", i); layoutTick++ }),
+                SettingItem("Refresh library now", null, "Forget the saved lists and load them again", action = {
+                    libCacheDir(ctx, urlText).deleteRecursively(); connect()
+                }),
+                toggle("Refresh in background", "Update channel lists and the extra guide while the app is closed (about every 6 hours)", store.flag("bgRefresh", true)) {
+                    val on = !store.flag("bgRefresh", true); store.setFlag("bgRefresh", on); BackgroundRefresh.apply(ctx, on); layoutTick++
+                },
                 SettingItem("Rebuild search index", null, "Refresh the on-device search of your library", action = { provider?.let { rebuildIndex(it, true) } }),
                 SettingItem("Back up settings to a file", null, null, action = { backup() }),
                 SettingItem("Restore settings from backup", null, null, action = { restore() }),
@@ -1861,6 +1904,7 @@ private fun App() {
             SettingSection("About", "Version and updates.", listOf(
                 SettingItem("Vance TV", BuildConfig.VERSION_NAME, "Version of this app", enabled = false),
                 SettingItem("Check for updates", null, "Install the newest version from GitHub", action = { updateOpen = true; checkUpdates(false) }),
+                SettingItem("Playback diagnostics", null, Diag.summary(), action = { Diag.reset(); layoutTick++ }),
                 SettingItem("This device", android.os.Build.MODEL, "Android ${android.os.Build.VERSION.RELEASE}", enabled = false),
                 SettingItem("Built with", null, "Media3 (playback), OkHttp (network), Coil (images), Jetpack Compose, FFmpeg decoder (jellyfin), Inter typeface. Movie data from TMDB.", enabled = false),
             )),

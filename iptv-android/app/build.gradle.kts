@@ -74,6 +74,8 @@ dependencies {
     testImplementation("net.sf.kxml:kxml2:2.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
     implementation("com.google.zxing:core:3.5.3")
     implementation("androidx.tvprovider:tvprovider:1.0.0")
 }
