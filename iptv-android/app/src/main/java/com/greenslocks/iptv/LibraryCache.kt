@@ -49,7 +49,11 @@ class CachedProvider(
                     dir.mkdirs()
                     val tmp = File(dir, "$name.tmp")
                     tmp.writeText(write(fresh).joinToString("\n"))
-                    tmp.renameTo(f)
+                    // Android normally replaces the destination on rename; Windows does not.
+                    if (!tmp.renameTo(f)) {
+                        tmp.copyTo(f, overwrite = true)
+                        tmp.delete()
+                    }
                 }
             }
             fresh

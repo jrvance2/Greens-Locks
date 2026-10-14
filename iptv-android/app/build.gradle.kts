@@ -7,6 +7,7 @@ plugins {
 val buildNumber = (project.findProperty("vc") as String?)?.toIntOrNull() ?: 2
 // -Pbeta=true builds the beta channel: installs next to the stable app and updates from its own releases.
 val isBeta = project.findProperty("beta") == "true"
+val isPreview = project.findProperty("preview") == "true"
 
 android {
     namespace = "com.greenslocks.iptv"
@@ -19,8 +20,11 @@ android {
         versionCode = buildNumber
         versionName = "1.2.$buildNumber" + if (isBeta) "-beta" else ""
         if (isBeta) applicationIdSuffix = ".beta"
+        if (isPreview) applicationIdSuffix = ".preview"
         resValue("string", "app_name", if (isBeta) "Vance TV Beta" else "Vance TV")
+        if (isPreview) resValue("string", "app_name", "Vance TV Preview")
         buildConfigField("boolean", "BETA", isBeta.toString())
+        buildConfigField("boolean", "PREVIEW", isPreview.toString())
         // The software audio decoder ships native code; only the chips real TV boxes use.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }

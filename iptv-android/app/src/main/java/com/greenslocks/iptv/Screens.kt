@@ -236,7 +236,7 @@ fun HeroBanner(
     val wash = tint ?: Palette.accent
     val animatedWash by androidx.compose.animation.animateColorAsState(wash, label = "heroWash")
     Box(
-        Modifier.fillMaxWidth().height(300.dp)
+        Modifier.fillMaxWidth().height(240.dp)
             .background(Brush.horizontalGradient(listOf(animatedWash.copy(alpha = 0.40f), animatedWash.copy(alpha = 0.16f), Palette.bg)))
     ) {
         androidx.compose.animation.Crossfade(
@@ -245,12 +245,7 @@ fun HeroBanner(
             label = "heroArt",
         ) { (url, show, plain) ->
             if (show) Box(Modifier.fillMaxSize()) {
-                val kb = rememberInfiniteTransition(label = "kenburns")
-                val zoom by kb.animateFloat(
-                    1f, if (Dimens.animLevel == 0) 1.07f else 1f,
-                    infiniteRepeatable(tween(22_000, easing = LinearEasing), RepeatMode.Reverse), label = "zoom",
-                )
-                Artwork(url, "", Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom }.alpha(if (plain) 0.18f else 0.5f), alignment = Alignment.TopCenter)
+                Artwork(url, "", Modifier.fillMaxSize().alpha(if (plain) 0.18f else 0.5f), alignment = Alignment.TopCenter)
                 Box(
                     Modifier.fillMaxSize().background(
                         Brush.horizontalGradient(listOf(Palette.bg.copy(alpha = 0.92f), Palette.bg.copy(alpha = 0.55f), Color.Transparent))

@@ -2,6 +2,8 @@ name: Build Vance TV APK
 on:
   push:
     paths: ['iptv-android/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['iptv-android/**', '.github/workflows/android.yml']
   workflow_dispatch:
 permissions:
   contents: write
@@ -18,14 +20,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.9 }
       - name: Pick the channel
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPO_NAME: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          BETA_COMMIT: ${{ contains(github.event.head_commit.message, '[beta]') }}
         run: |
-          # A commit message containing [beta] builds the beta channel (installs beside the stable app, own update feed).
-          if [[ "${{ contains(github.event.head_commit.message, '[beta]') }}" == "true" ]]; then
+          # Only the upstream main and beta development branches may publish releases.
+          # Other branches and pull requests build a separate, manually updated preview.
+          if [[ "$EVENT_NAME" == "pull_request" || "$REPO_NAME" != "jrvance2/Greens-Locks" || ( "$REF_NAME" != "main" && "$REF_NAME" != "claude/lucid-hopper-c9nw1w" ) ]]; then
+            echo "BETA_FLAG=-Pbeta=true -Ppreview=true" >> "$GITHUB_ENV"; echo "TAG_PREFIX=preview" >> "$GITHUB_ENV"; echo "Preview channel"
+          elif [[ "$REF_NAME" == "claude/lucid-hopper-c9nw1w" || "$BETA_COMMIT" == "true" ]]; then
             echo "BETA_FLAG=-Pbeta=true" >> "$GITHUB_ENV"; echo "TAG_PREFIX=beta" >> "$GITHUB_ENV"; echo "Beta channel"
           else
             echo "BETA_FLAG=" >> "$GITHUB_ENV"; echo "TAG_PREFIX=build" >> "$GITHUB_ENV"; echo "Stable channel"
           fi
       - name: Prepare signing key
+        if: env.TAG_PREFIX != 'preview'
         env:
           KEYSTORE_BASE64: ${{ secrets.VANCETV_KEYSTORE_BASE64 }}
         run: |
@@ -44,7 +55,7 @@ jobs:
           VANCETV_KEY_ALIAS: ${{ secrets.VANCETV_KEY_ALIAS }}
           VANCETV_KEY_PASSWORD: ${{ secrets.VANCETV_KEY_PASSWORD }}
       - name: Publish release for in-app updates (stable-signed builds only)
-        if: env.VANCETV_KEYSTORE != ''
+        if: env.TAG_PREFIX != 'preview' && env.VANCETV_KEYSTORE != '' && github.repository == 'jrvance2/Greens-Locks' && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -64,5 +75,5 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: vancetv-apk
+          name: vancetv-${{ env.TAG_PREFIX }}-apk
           path: iptv-android/app/build/outputs/apk/release/app-release.apk

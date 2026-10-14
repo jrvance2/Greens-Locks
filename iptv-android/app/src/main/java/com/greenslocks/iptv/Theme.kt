@@ -128,7 +128,7 @@ val THEME_PICKS = listOf(
     acc("Red") to bg("Crimson night"), acc("Gold") to bg("Espresso"), acc("Blue") to bg("Midnight blue"),
 )
 val ANIM_NAMES = listOf("Full", "Reduced", "Off")
-val START_NAMES = listOf("Home", "Live TV", "Last channel")
+val START_NAMES = listOf("Home", "Live TV")
 
 fun applyAppearance(accent: Int, bg: Int, cards: Int, text: Int, anim: Int, ui: Int = 1) {
     Dimens.uiScale = UI_SCALES[ui.coerceIn(0, UI_SCALES.lastIndex)]

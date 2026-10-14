@@ -2,6 +2,9 @@
 
 package com.greenslocks.iptv
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PlayArrow
+
 import android.app.PictureInPictureParams
 import android.app.UiModeManager
 import android.os.Build
@@ -211,6 +214,14 @@ private fun App() {
 private class AppState(val ctx: Context, val scope: kotlinx.coroutines.CoroutineScope) {
     val prefs: android.content.SharedPreferences = ctx.getSharedPreferences("iptv", Context.MODE_PRIVATE)
     val store = Store(prefs)
+    init {
+        if (!store.flag("quietHomeV1", false)) {
+            store.setInt("start", 0)
+            store.setFlag("autoplayLaunch", false)
+            store.setFlag("rotateHomeBanner", false)
+            store.setFlag("quietHomeV1", true)
+        }
+    }
     val isTv: Boolean =
         (ctx.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
 
@@ -255,7 +266,9 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     var textIdx by mutableIntStateOf(store.int("text", 1))
     var uiIdx by mutableIntStateOf(store.int("ui", 1))
     var animIdx by mutableIntStateOf(store.int("anim", 0))
-    var startIdx by mutableIntStateOf(store.int("start", 1))
+    var startIdx by mutableIntStateOf(store.int("start", 0).coerceIn(0, START_NAMES.lastIndex))
+    var autoplayLaunch by mutableStateOf(store.flag("autoplayLaunch", false))
+    var rotateHomeBanner by mutableStateOf(store.flag("rotateHomeBanner", false))
     var startTick by mutableIntStateOf(0)
     var panelOpen by mutableStateOf(false)
     var panelMode by mutableIntStateOf(0)
@@ -934,9 +947,6 @@ private fun AppState.AppBody() {
             listVersion++
             loadHome(p)
             rebuildIndex(p, false)
-            if (current == null) {
-                current = store.string("last")?.let(::decodeEntry)?.takeIf { it.kind == Kind.LIVE }
-            }
             startTick++
             if (store.string("picked") == null) {
                 val total = runCatching {
@@ -1073,6 +1083,10 @@ private fun AppState.AppBody() {
         scope.launch { account = runCatching { p.account() }.getOrNull() }
     }
     fun checkUpdates(silent: Boolean) {
+        if (BuildConfig.PREVIEW) {
+            if (!silent) updateState = UpdateState.Failed("Preview builds are updated manually")
+            return
+        }
         scope.launch {
             if (!silent) updateState = UpdateState.Checking
             val r = runCatching { Updater.latest() }.getOrNull()
@@ -1104,7 +1118,9 @@ private fun AppState.AppBody() {
     }
     fun afterImport() {
         accentIdx = store.int("accent", 0); bgIdx = store.int("bg", 0); cardIdx = store.int("cards", 1)
-        textIdx = store.int("text", 1); uiIdx = store.int("ui", 1); animIdx = store.int("anim", 0); startIdx = store.int("start", 1)
+        autoplayLaunch = store.flag("autoplayLaunch", false)
+        rotateHomeBanner = store.flag("rotateHomeBanner", false)
+        textIdx = store.int("text", 1); uiIdx = store.int("ui", 1); animIdx = store.int("anim", 0); startIdx = store.int("start", 0).coerceIn(0, START_NAMES.lastIndex)
         sortAz = store.flag("sortAz", false); showHidden = store.flag("showHidden", false)
         lockAdult = store.flag("lockAdult", true); autoNext = store.flag("autoNext", true)
         matchFps = store.flag("matchFps", true); liveTs = store.flag("liveTs", false)
@@ -1396,9 +1412,9 @@ private fun AppState.AppBody() {
     }
     LaunchedEffect(startTick) {
         if (startTick == 0) return@LaunchedEffect
-        when (startIdx) {
-            1 -> openTab(Tab.LIVE)
-            2 -> { openTab(Tab.LIVE); current?.takeIf { it.kind == Kind.LIVE }?.let { playNow(it, true) } }
+        if (startIdx == 1) openTab(Tab.LIVE)
+        if (autoplayLaunch) {
+            store.string("last")?.let(::decodeEntry)?.takeIf { it.isLiveNow && visible(it) }?.let { playNow(it, true) }
         }
     }
     LaunchedEffect(panelOpen, panelMode, panelChannels) {
@@ -1749,13 +1765,21 @@ private fun AppState.AppBody() {
                 toggle("Ambient background", "Slowly moving color glow behind Home", Dimens.ambient) { setLayoutFlag("ambient", !Dimens.ambient) },
                 toggle("Navigation sounds", "A soft click as you move around (uses your TV's system sounds)", Dimens.sounds) { setLayoutFlag("sounds", !Dimens.sounds) },
             )),
+            SettingSection("Startup", "Playback stays off until you select a channel or press Play.", listOf(
+                SettingItem("Start screen", START_NAMES[startIdx], "What opens when you launch Vance TV",
+                    choices = START_NAMES, selected = startIdx, onPick = { i -> startIdx = i; store.setInt("start", i); layoutTick++ }),
+                toggle("Autoplay last channel on launch", "Start the last live channel automatically", autoplayLaunch) {
+                    autoplayLaunch = !autoplayLaunch; store.setFlag("autoplayLaunch", autoplayLaunch)
+                },
+            )),
             SettingSection("Layout", "How the app is arranged.", listOf(
+                toggle("Rotate Home banner", "Automatically cycle featured artwork", rotateHomeBanner) {
+                    rotateHomeBanner = !rotateHomeBanner; store.setFlag("rotateHomeBanner", rotateHomeBanner)
+                },
                 SettingItem("Navigation", NAV_NAMES[if (Dimens.topNav) 1 else 0], "Menu down the side or across the top",
                     choices = NAV_NAMES, selected = if (Dimens.topNav) 1 else 0, onPick = { i -> setLayoutFlag("topNav", i == 1) }),
                 SettingItem("Menu style", if (Dimens.railLabels) "Icons + labels" else "Icons only", "Icons only gives the content more room",
                     choices = listOf("Icons + labels", "Icons only"), selected = if (Dimens.railLabels) 0 else 1, onPick = { i -> setLayoutFlag("railLabels", i == 0) }),
-                SettingItem("Start screen", START_NAMES[startIdx], "What opens when you launch Vance TV",
-                    choices = START_NAMES, selected = startIdx, onPick = { i -> startIdx = i; store.setInt("start", i); layoutTick++ }),
                 toggle("Home banner", "The large featured title at the top of Home", Dimens.homeHero) { setLayoutFlag("homeHero", !Dimens.homeHero) },
                 toggle("Home filter chips", "All, Movies, Series, Live and 4K above the rows", Dimens.homeChips) { setLayoutFlag("homeChips", !Dimens.homeChips) },
                 SettingItem("Card size", CARD_NAMES[cardIdx], "Compact fits more; Large reads better from the couch",
@@ -2327,13 +2351,14 @@ private fun AppState.AppBody() {
                 Box(Modifier.fillMaxSize().padding(start = if (Dimens.topNav) 0.dp else railWidth, top = if (Dimens.topNav) 60.dp else 0.dp)) {
                     when (tab) {
                         Tab.HOME -> {
-                            val cont = recentEntries.filter { visible(it) }.take(20)
+                            val lastLive = store.string("last")?.let(::decodeEntry)?.takeIf { it.isLiveNow && visible(it) }
+                            val cont = recentEntries.filter { it.kind != Kind.LIVE && visible(it) }.take(20)
                             val favs = favoriteEntries.filter { visible(it) }.take(20)
                             val heroPool = (cont.filter { it.kind != Kind.LIVE }.take(3) +
                                 homeShelves.asSequence().flatMap { it.items.asSequence() }.filter { it.kind != Kind.LIVE && visible(it) }.take(12).toList()).distinctBy { it.key() }.take(6)
                             var heroIdx by remember { mutableIntStateOf(0) }
-                            LaunchedEffect(heroPool.size, focusedHome == null) {
-                                while (focusedHome == null && heroPool.size > 1 && Dimens.homeHero && Dimens.animLevel != 2) {
+                            LaunchedEffect(heroPool.size, focusedHome == null, rotateHomeBanner) {
+                                while (rotateHomeBanner && focusedHome == null && heroPool.size > 1 && Dimens.homeHero && Dimens.animLevel != 2) {
                                     delay(9000); heroIdx = (heroIdx + 1) % heroPool.size
                                 }
                             }
@@ -2342,13 +2367,17 @@ private fun AppState.AppBody() {
                             val hero = focusedHome ?: baseHero
                             val shelves = buildList {
                                 if (cont.isNotEmpty()) add(Triple("Continue watching", cont, true))
+                                val channels = favs.filter { it.kind == Kind.LIVE }
+                                val titles = favs.filter { it.kind != Kind.LIVE }
+                                if (channels.isNotEmpty()) add(Triple("Favorite channels", channels, true))
+                                if (titles.isNotEmpty()) add(Triple("Favorite movies & series", titles, false))
                                 val seed = cont.firstOrNull { it.kind == Kind.MOVIE || it.kind == Kind.SERIES || it.kind == Kind.EPISODE }
                                 if (seed != null && seed.cat.isNotBlank()) {
                                     val seen = cont.map { it.key() }.toSet()
                                     val like = homeShelves.asSequence().flatMap { it.items.asSequence() }.filter { it.cat == seed.cat && it.kind != Kind.LIVE && it.key() !in seen && visible(it) }.distinctBy { it.key() }.take(20).toList()
                                     if (like.size >= 4) add(Triple("Because you watched ${if (seed.parent.isNotBlank()) seed.parent else seed.title}", like, false))
                                 }
-                                if (favs.isNotEmpty()) add(Triple("Favorites", favs, true))
+
                                 val mine = myList.mapNotNull(::decodeEntry).filter { visible(it) }.take(20)
                                 if (mine.isNotEmpty()) add(Triple("My list", mine, false))
                                 homeShelves.forEach { add(Triple(it.title, it.items.filter { e -> visible(e) }, false)) }
@@ -2374,16 +2403,25 @@ private fun AppState.AppBody() {
                             }.filter { it.second.isNotEmpty() }
                             if (Dimens.ambient) AmbientBackground(Modifier.fillMaxSize())
                             LazyColumn(Modifier.fillMaxSize(), state = homeState, contentPadding = PaddingValues(bottom = 40.dp)) {
+                                if (lastLive != null && homeFilter in listOf(0, 3)) item {
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("LAST CHANNEL", color = Palette.muted, style = MaterialTheme.typography.labelLarge)
+                                            Text(titleFor(lastLive), style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                                        }
+                                        ActionButton("Resume channel", Modifier.focusRequester(firstItem), icon = Icons.Rounded.PlayArrow, onClick = { playNow(lastLive, true) })
+                                    }
+                                }
                                 if (hero != null && Dimens.homeHero) item {
                                     HeroBanner(
                                         hero, if (cont.contains(hero)) "Continue watching" else "Featured",
                                         titleFor(hero), subFor(hero),
                                         canOpenDetails = hero.kind == Kind.MOVIE || hero.kind == Kind.SERIES,
-                                        playFocus = Modifier.focusRequester(firstItem),
+                                        playFocus = if (lastLive == null || homeFilter !in listOf(0, 3)) Modifier.focusRequester(firstItem) else Modifier,
                                         onPlay = { if (hero.kind == Kind.SERIES) onEntry(hero) else playNow(hero, true) },
                                         onDetails = { onEntry(hero) },
                                         backdrop = heroBackdrop,
-                                        dots = if (focusedHome == null) heroPool.size else 0, dot = heroIdx,
+                                        dots = if (rotateHomeBanner && focusedHome == null) heroPool.size else 0, dot = heroIdx,
                                     )
                                 }
                                 if (Dimens.homeChips) item {
@@ -2400,7 +2438,7 @@ private fun AppState.AppBody() {
                                     ShelfRow(
                                         title, items, wide, ::titleFor, ::subFor, ::progressOf, ::isFav,
                                         onLongClick = { menuTarget = MenuTarget.EntryT(it) }, onOpen = ::onEntry,
-                                        firstFocus = if ((hero == null || !Dimens.homeHero) && i == 0) Modifier.focusRequester(firstItem) else Modifier,
+                                        firstFocus = if ((lastLive == null || homeFilter !in listOf(0, 3)) && (hero == null || !Dimens.homeHero) && i == 0) Modifier.focusRequester(firstItem) else Modifier,
                                         onFocusEntry = { pendingHome = it },
                                     )
                                 }

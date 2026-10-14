@@ -144,7 +144,7 @@ class Store(private val prefs: SharedPreferences) {
     private val backupLists = listOf("fav2", "hist", "hidCats", "hidEntries", "lockCats", "pinCats", "mylist", "reminders", "kidsCats", "seriesRules")
     private val backupMaps = listOf("renames", "catOrder", "groups", "chShift")
     private val backupInts = listOf("accent", "bg", "cards", "text", "anim", "ui", "audioMode", "uaMode", "corner", "rowSize", "guideRow", "overlay", "audioLang", "subLang", "recPadStart", "recPadEnd", "start", "buffer", "resize", "subSize", "sortMode")
-    private val backupFlags = listOf("xmltvFirst", "clock", "topNav", "homeHero", "homeChips", "glow", "heroTint", "pcmAudio", "sounds", "railLabels", "zapStrip", "mergeDupes", "sortAz", "showHidden", "lockAdult", "autoNext", "matchFps", "liveTs")
+    private val backupFlags = listOf("autoplayLaunch", "rotateHomeBanner", "xmltvFirst", "clock", "topNav", "homeHero", "homeChips", "glow", "heroTint", "pcmAudio", "sounds", "railLabels", "zapStrip", "mergeDupes", "sortAz", "showHidden", "lockAdult", "autoNext", "matchFps", "liveTs")
 
     fun exportBackup(): String {
         val root = JSONObject().put("app", "VanceTV").put("version", 1)
