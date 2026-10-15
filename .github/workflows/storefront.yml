@@ -10,7 +10,6 @@ jobs:
     environment: { name: github-pages }
     steps:
       - uses: actions/checkout@v4
-      - run: cd storefront/product && zip -r ../site/it-admin-script-pack.zip . && cd ../.. && echo "built"
       - uses: actions/upload-pages-artifact@v3
         with: { path: storefront/site }
       - uses: actions/deploy-pages@v4
