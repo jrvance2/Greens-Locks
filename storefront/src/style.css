@@ -1,0 +1,6 @@
+@page{size:Letter;margin:.5in}*{box-sizing:border-box}
+body{font:12px/1.4 Helvetica,Arial,sans-serif;color:#222;margin:0}
+h1{font-size:24px;margin:0 0 4px;color:#1d6b57}.sub{color:#666;margin-bottom:14px}
+table{width:100%;border-collapse:collapse}th{background:#1d6b57;color:#fff;text-align:left;padding:6px;font-size:11px}
+td{border-bottom:1px solid #bbb;height:26px;padding:0 6px}.box{border:1.5px solid #1d6b57;border-radius:6px;padding:8px;margin:10px 0}
+.row{display:flex;gap:12px}.row>*{flex:1}
