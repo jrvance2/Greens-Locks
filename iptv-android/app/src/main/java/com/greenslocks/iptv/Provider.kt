@@ -41,6 +41,12 @@ interface Provider {
     suspend fun indexAll(kind: Kind, sink: (Entry) -> Unit)
     suspend fun nextEpisode(current: Entry): Entry?
     fun streamUrl(entry: Entry): String
+    /** The newest items of a kind across the whole library (streamed; nothing else is kept). Empty when unsupported. */
+    suspend fun recent(kind: Kind, limit: Int): List<Entry> = emptyList()
+    /** For the given series ids: when the provider last changed each one (seconds) and its cover. */
+    suspend fun seriesStamps(ids: Set<String>): Map<String, Pair<Long, String>> = emptyMap()
+    /** How many episodes the provider lists for a series, or -1 if unknown. */
+    suspend fun episodeCount(series: Entry): Int = -1
 }
 
 private fun JsonReader.str(): String =
@@ -286,6 +292,74 @@ class XtreamProvider(
             }
             r.endArray()
         }
+    }
+
+    override suspend fun recent(kind: Kind, limit: Int): List<Entry> = withContext(Dispatchers.IO) {
+        val (action, idKey) = when (kind) {
+            Kind.MOVIE -> "get_vod_streams" to "stream_id"
+            Kind.SERIES -> "get_series" to "series_id"
+            else -> return@withContext emptyList<Entry>()
+        }
+        val iconKey = if (kind == Kind.SERIES) "cover" else "stream_icon"
+        val top = TopN<Entry>(limit)
+        val conn = URL(api(action)).openConnection().apply { setRequestProperty("User-Agent", Net.userAgent); connectTimeout = 15000; readTimeout = 180000 }
+        JsonReader(conn.getInputStream().bufferedReader()).use { r ->
+            r.beginArray()
+            while (r.hasNext()) {
+                var id = ""; var name = ""; var icon = ""; var cat = ""; var ext = ""; var num = 0; var added = 0L; var mod = 0L
+                r.beginObject()
+                while (r.hasNext()) {
+                    when (r.nextName()) {
+                        idKey -> id = r.str()
+                        "name" -> name = r.str()
+                        iconKey -> icon = r.str()
+                        "category_id" -> cat = r.str()
+                        "container_extension" -> ext = r.str()
+                        "num" -> num = r.str().toIntOrNull() ?: 0
+                        "added" -> added = r.str().toLongOrNull() ?: 0L
+                        "last_modified" -> mod = r.str().toLongOrNull() ?: 0L
+                        else -> r.skipValue()
+                    }
+                }
+                r.endObject()
+                val ts = maxOf(added, mod)
+                if (ts > 0 && id.isNotEmpty()) top.offer(ts, Entry(kind, id, name, ext.ifEmpty { "mp4" }, icon.takeUnless { it == "null" }.orEmpty(), num, cat, added = ts))
+            }
+            r.endArray()
+        }
+        top.toList()
+    }
+
+    override suspend fun seriesStamps(ids: Set<String>): Map<String, Pair<Long, String>> = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) return@withContext emptyMap()
+        val out = HashMap<String, Pair<Long, String>>()
+        val conn = URL(api("get_series")).openConnection().apply { setRequestProperty("User-Agent", Net.userAgent); connectTimeout = 15000; readTimeout = 180000 }
+        JsonReader(conn.getInputStream().bufferedReader()).use { r ->
+            r.beginArray()
+            while (r.hasNext()) {
+                var id = ""; var cover = ""; var mod = 0L
+                r.beginObject()
+                while (r.hasNext()) {
+                    when (r.nextName()) {
+                        "series_id" -> id = r.str()
+                        "cover" -> cover = r.str()
+                        "last_modified" -> mod = r.str().toLongOrNull() ?: 0L
+                        else -> r.skipValue()
+                    }
+                }
+                r.endObject()
+                if (id in ids) out[id] = mod to cover.takeUnless { it == "null" }.orEmpty()
+            }
+            r.endArray()
+        }
+        out
+    }
+
+    override suspend fun episodeCount(series: Entry): Int {
+        val seasons = seriesInfo(series.id).optJSONObject("episodes") ?: return -1
+        var n = 0
+        for (k in seasons.keys()) n += seasons.optJSONArray(k)?.length() ?: 0
+        return n
     }
 
     override suspend fun nextEpisode(current: Entry): Entry? {

@@ -93,6 +93,17 @@ class CachedProvider(
 
     override suspend fun counts(kind: Kind): Map<String, Int> = countsOf(kind)()
 
+    private fun recentOf(kind: Kind, limit: Int, force: Boolean = false) = suspend {
+        cached(
+            "rec_${kind.name}_$limit", force,
+            read = { l -> l.mapNotNull(::decodeEntry) },
+            write = { l -> l.map { it.encode().replace('\n', ' ') } },
+            isEmpty = { it.isEmpty() },
+        ) { inner.recent(kind, limit) }
+    }
+
+    override suspend fun recent(kind: Kind, limit: Int): List<Entry> = recentOf(kind, limit)()
+
     /** Re-downloads the category lists and counts (used by the background job). */
     suspend fun refreshLists() {
         val kinds = if (inner.supportsVod) listOf(Kind.LIVE, Kind.MOVIE, Kind.SERIES) else listOf(Kind.LIVE)
@@ -100,6 +111,7 @@ class CachedProvider(
             runCatching { catsOf(k, true)() }
             runCatching { countsOf(k, true)() }
         }
+        if (inner.supportsVod) for (k in listOf(Kind.MOVIE, Kind.SERIES)) runCatching { recentOf(k, 150, true)() }
         // Drop per-category lists so the next visit fetches fresh ones.
         dir.listFiles()?.filter { it.name.startsWith("ent_") }?.forEach { it.delete() }
     }

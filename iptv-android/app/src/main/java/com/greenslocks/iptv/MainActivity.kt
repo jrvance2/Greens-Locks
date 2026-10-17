@@ -269,6 +269,8 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     var myList by mutableStateOf(store.list("mylist"))
     var groups by mutableStateOf(store.map("groups"))
     var reminders by mutableStateOf(store.list("reminders"))
+    var newEps by mutableStateOf(store.list("newEps"))
+    val knownStamps = mutableMapOf<String, Long>()
     var dueReminder by mutableStateOf<Reminder?>(null)
     var remindersOpen by mutableStateOf(false)
     var kidsMode by mutableStateOf(store.isKids(store.active))
@@ -873,8 +875,22 @@ private fun AppState.AppBody() {
                     }
                 }
             }
-            val newest = loaded.filter { it.added > 0 }.sortedByDescending { it.added }.take(30)
-            if (newest.isNotEmpty()) homeShelves = listOf(Shelf("Recently added", newest)) + homeShelves
+            // Newest titles across the whole library (not just the first categories), without adult categories.
+            val recents = runCatching {
+                fun allowed(t: Tab, kind: Kind) = orderedCats(t).filter { !catLocked(kind, it) && !isAdult(it.name) }.map { it.id }.toSet()
+                val am = allowed(Tab.MOVIES, Kind.MOVIE)
+                val asr = allowed(Tab.SERIES, Kind.SERIES)
+                listOf(
+                    "Recently added movies" to p.recent(Kind.MOVIE, 150).filter { it.cat in am }.take(30),
+                    "Recently added series" to p.recent(Kind.SERIES, 150).filter { it.cat in asr }.take(30),
+                ).filter { it.second.isNotEmpty() }
+            }.getOrDefault(emptyList())
+            if (recents.isNotEmpty()) {
+                homeShelves = recents.map { Shelf(it.first, it.second) } + homeShelves
+            } else {
+                val newest = loaded.filter { it.added > 0 }.sortedByDescending { it.added }.take(30)
+                if (newest.isNotEmpty()) homeShelves = listOf(Shelf("Recently added", newest)) + homeShelves
+            }
         }
     }
 
@@ -999,10 +1015,19 @@ private fun AppState.AppBody() {
             orderedCats(t).firstOrNull { !catLocked(kind, it) }?.let { c -> if (category == null) openCategory(kind, c) }
         }
     }
+    fun markSeriesSeen(seriesId: String, count: Int) {
+        if (count <= 0) return
+        store.setString("sc_$seriesId", count.toString())
+        store.setString("sm_$seriesId", (knownStamps[seriesId] ?: (System.currentTimeMillis() / 1000)).toString())
+        if (newEps.any { decodeEntry(it)?.id == seriesId }) {
+            newEps = newEps.filter { decodeEntry(it)?.id != seriesId }
+            store.setList("newEps", newEps)
+        }
+    }
     fun openSeries(e: Entry) {
         val p = provider ?: return
         series = e; detailEntry = e; detail = null; episodes = emptyList()
-        launchLoad { episodes = p.episodes(e).map { it.copy(cat = e.cat) } }
+        launchLoad { episodes = p.episodes(e).map { it.copy(cat = e.cat) }; markSeriesSeen(e.id, episodes.size) }
         loadDetail(p, e)
     }
     fun openMovie(e: Entry) {
@@ -1179,6 +1204,49 @@ private fun AppState.AppBody() {
     }
     val favoriteEntries = remember(favorites) { favorites.mapNotNull(::decodeEntry) }
     val recentEntries = remember(history) { history.mapNotNull(::decodeEntry) }
+    // Series you follow (watching, favorited or in My list) that have gained episodes since you last opened them.
+    fun checkNewEpisodes(p: Provider, force: Boolean = false) {
+        if (!p.supportsVod) return
+        scope.launch {
+            val now0 = System.currentTimeMillis()
+            if (!force && now0 - (store.string("neChk")?.toLongOrNull() ?: 0L) < 3 * 3_600_000L) return@launch
+            val watched = (recentEntries + favoriteEntries + myList.mapNotNull(::decodeEntry))
+                .mapNotNull { e ->
+                    when (e.kind) {
+                        Kind.SERIES -> e
+                        Kind.EPISODE -> if (e.series.isNotBlank()) Entry(Kind.SERIES, e.series, e.parent, icon = e.icon, cat = e.cat) else null
+                        else -> null
+                    }
+                }.distinctBy { it.id }.take(25)
+            if (watched.isEmpty()) return@launch
+            val stamps = runCatching { p.seriesStamps(watched.map { it.id }.toSet()) }.getOrDefault(emptyMap())
+            if (stamps.isEmpty()) return@launch
+            val flagged = LinkedHashMap<String, Entry>()
+            newEps.mapNotNull(::decodeEntry).forEach { flagged[it.id] = it }
+            for (s in watched) {
+                val (stamp, cover) = stamps[s.id] ?: continue
+                knownStamps[s.id] = stamp
+                val seenStamp = store.string("sm_${s.id}")?.toLongOrNull()
+                val seenCount = store.string("sc_${s.id}")?.toIntOrNull()
+                if (EpisodeWatch.needsBaseline(seenStamp, seenCount)) {
+                    val c = runCatching { p.episodeCount(s) }.getOrDefault(-1)
+                    if (c > 0) { store.setString("sm_${s.id}", stamp.toString()); store.setString("sc_${s.id}", c.toString()) }
+                } else if (EpisodeWatch.changedSince(stamp, seenStamp!!)) {
+                    val c = runCatching { p.episodeCount(s) }.getOrDefault(-1)
+                    if (c >= 0 && EpisodeWatch.hasNew(c, seenCount!!)) flagged[s.id] = s.copy(icon = cover.ifBlank { s.icon })
+                    else if (c >= 0) store.setString("sm_${s.id}", stamp.toString()) // changed, but no new episodes
+                }
+            }
+            newEps = flagged.values.map { it.encode() }
+            store.setList("newEps", newEps)
+            store.setString("neChk", now0.toString())
+        }
+    }
+    LaunchedEffect(provider) {
+        val p = provider ?: return@LaunchedEffect
+        delay(12_000)
+        while (true) { checkNewEpisodes(p); delay(3 * 3_600_000L + 60_000L) }
+    }
     val searching = tab == Tab.LIVE && query.length >= 2 && !kidsMode
     val baseEntries = if (tab == Tab.FAVORITES) favoriteEntries else entries
     val shownEntries = remember(
@@ -2342,6 +2410,8 @@ private fun AppState.AppBody() {
                             val hero = focusedHome ?: baseHero
                             val shelves = buildList {
                                 if (cont.isNotEmpty()) add(Triple("Continue watching", cont, true))
+                                val fresh = newEps.mapNotNull(::decodeEntry).filter { visible(it) }
+                                if (fresh.isNotEmpty()) add(Triple("New episodes", fresh, false))
                                 val seed = cont.firstOrNull { it.kind == Kind.MOVIE || it.kind == Kind.SERIES || it.kind == Kind.EPISODE }
                                 if (seed != null && seed.cat.isNotBlank()) {
                                     val seen = cont.map { it.key() }.toSet()
@@ -2402,6 +2472,7 @@ private fun AppState.AppBody() {
                                         onLongClick = { menuTarget = MenuTarget.EntryT(it) }, onOpen = ::onEntry,
                                         firstFocus = if ((hero == null || !Dimens.homeHero) && i == 0) Modifier.focusRequester(firstItem) else Modifier,
                                         onFocusEntry = { pendingHome = it },
+                                        badgeOf = { if (it.kind == Kind.SERIES && newEps.any { n -> decodeEntry(n)?.id == it.id }) "NEW EPISODES" else null },
                                     )
                                 }
                                 if (hero == null && shelves.isEmpty()) item {
@@ -2503,6 +2574,7 @@ private fun AppState.AppBody() {
                                             nameOf(e), e.icon, "", isFav(e), progressOf(e),
                                             if (i == 0) Modifier.focusRequester(firstItem) else Modifier, width = null,
                                             onLongClick = { menuTarget = MenuTarget.EntryT(e) },
+                                            badge = if (e.kind == Kind.SERIES && newEps.any { n -> decodeEntry(n)?.id == e.id }) "NEW EPISODES" else null,
                                         ) { onEntry(e) }
                                     }
                                 }

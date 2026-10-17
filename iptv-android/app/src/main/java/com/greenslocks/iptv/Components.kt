@@ -77,6 +77,17 @@ fun Sheen(focused: Boolean, modifier: Modifier = Modifier) {
     )
 }
 
+/** Accent pill in a card corner, e.g. "NEW EPISODES". */
+@Composable
+fun BoxScope.NewTag(text: String) {
+    Text(
+        text, Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(5.dp))
+            .background(Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2)))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+    )
+}
+
 /** Small "4K" tag in a card corner. */
 @Composable
 fun BoxScope.QualityTag(title: String) {
@@ -272,12 +283,13 @@ fun PosterCard(
     fit: ContentScale = ContentScale.Crop,
     onLongClick: () -> Unit = {},
     onFocus: () -> Unit = {},
+    badge: String? = null,
     onClick: () -> Unit,
 ) {
     Column(if (width != null) Modifier.width(width) else Modifier.fillMaxWidth()) {
         FocusCard(modifier.fillMaxWidth().aspectRatio(2f / 3f), onLongClick = onLongClick, onFocus = onFocus, onClick = onClick) { focused ->
             Artwork(icon, title, Modifier.fillMaxSize(), fit)
-            QualityTag(title)
+            if (badge != null) NewTag(badge) else QualityTag(title)
             Sheen(focused)
             Box(Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(Dimens.corner)))
             if (favorite) {
@@ -347,6 +359,7 @@ fun ShelfRow(
     onOpen: (Entry) -> Unit,
     firstFocus: Modifier = Modifier,
     onFocusEntry: (Entry) -> Unit = {},
+    badgeOf: (Entry) -> String? = { null },
 ) {
     var rowActive by remember { mutableStateOf(false) }
     Column(Modifier.onFocusChanged { rowActive = it.hasFocus }) {
@@ -366,7 +379,7 @@ fun ShelfRow(
                 } else {
                     PosterCard(
                         titleOf(e), e.icon, subtitleOf(e), isFavorite(e), progressOf(e), mod,
-                        onLongClick = { onLongClick(e) }, onFocus = { onFocusEntry(e) },
+                        onLongClick = { onLongClick(e) }, onFocus = { onFocusEntry(e) }, badge = badgeOf(e),
                     ) { onOpen(e) }
                 }
             }
