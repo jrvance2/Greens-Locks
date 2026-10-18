@@ -55,6 +55,18 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.animation.Crossfade
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import androidx.compose.foundation.BorderStroke
+import androidx.tv.material3.Border
+import androidx.tv.material3.ButtonDefaults
+import androidx.tv.material3.FilterChip
+import androidx.tv.material3.FilterChipDefaults
+import androidx.tv.material3.ListItem
+import androidx.tv.material3.ListItemDefaults
+import androidx.compose.ui.graphics.compositeOver
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Glow
+import androidx.tv.material3.Surface as TvSurface
 
 /** A diagonal band of light that sweeps across a card once each time it gains focus. Costs nothing on unfocused cards. */
 @Composable
@@ -102,8 +114,11 @@ fun BoxScope.QualityTag(title: String) {
     )
 }
 
-/** Focusable, clickable surface that scales up and gets an accent ring when focused. */
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * Focusable, clickable card on Compose for TV's Surface: it scales up, gets an accent ring and glow when focused,
+ * and handles click and long-click. The animation settings only change how far it grows and whether it glows.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun FocusCard(
     modifier: Modifier = Modifier,
@@ -120,40 +135,31 @@ fun FocusCard(
     val focused by source.collectIsFocusedAsState()
     val level = Dimens.animLevel
     val grows = scaleOnFocus != 1f && level != 2
-    val target = if (level == 1) 1f + (scaleOnFocus - 1f) * 0.4f else scaleOnFocus
-    val scale by animateFloatAsState(
-        if (focused && grows) target else 1f,
-        if (level == 0) spring(dampingRatio = 0.62f, stiffness = 420f) else tween(if (level == 1) 60 else Motion.FAST, easing = Motion.ease),
-        label = "focusScale",
-    )
+    val target = if (!grows) 1f else if (level == 1) 1f + (scaleOnFocus - 1f) * 0.4f else scaleOnFocus
     val glowOn = level == 0 && scaleOnFocus != 1f && Dimens.glow
-    val glow by animateFloatAsState(if (focused && glowOn) 18f else 0f, tween(Motion.MED, easing = Motion.ease), label = "glow")
-    Box(
-        modifier
-            .then(
-                if (grows || glowOn)
-                    Modifier.then(if (grows) Modifier.zIndex(if (focused) 1f else 0f) else Modifier).graphicsLayer {
-                        if (grows) { scaleX = scale; scaleY = scale }
-                        if (glowOn) {
-                            shadowElevation = glow.dp.toPx()
-                            this.shape = shape
-                            clip = false
-                            ambientShadowColor = Palette.accent
-                            spotShadowColor = Palette.accent
-                        }
-                    }
-                else Modifier
-            )
-            // Only draw the ring while focused: a 0.dp border still paints a hairline.
-            .then(if (focused) Modifier.border(borderWidth, Palette.accent, shape) else Modifier)
-            .clip(shape)
+    TvSurface(
+        onClick = onClick,
+        onLongClick = onLongClick,
+        modifier = modifier
+            .zIndex(if (focused) 1f else 0f)
             .onFocusChanged {
                 if (it.isFocused) {
                     if (Dimens.sounds) view.playSoundEffect(SoundEffectConstants.NAVIGATION_RIGHT)
                     onFocus()
                 }
-            }
-            .combinedClickable(interactionSource = source, indication = null, onLongClick = onLongClick, onClick = onClick)
+            },
+        shape = ClickableSurfaceDefaults.shape(shape),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent, contentColor = Palette.text,
+            focusedContainerColor = Color.Transparent, focusedContentColor = Palette.text,
+            pressedContainerColor = Color.Transparent, pressedContentColor = Palette.text,
+        ),
+        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = target, pressedScale = target),
+        border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(borderWidth, Palette.accent), shape = shape)),
+        glow = ClickableSurfaceDefaults.glow(
+            focusedGlow = if (glowOn) Glow(Palette.accent.copy(alpha = 0.55f), 18.dp) else Glow.None,
+        ),
+        interactionSource = source,
     ) { content(focused) }
 }
 
@@ -400,34 +406,64 @@ fun ShelfRow(
     }
 }
 
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun Chip(text: String, selected: Boolean, modifier: Modifier = Modifier, onLongClick: () -> Unit = {}, onClick: () -> Unit) {
-    FocusCard(modifier, RoundedCornerShape(50), 1.06f, 2.dp, onLongClick, onClick) {
-        Text(
-            text, maxLines = 1,
-            modifier = Modifier.background(if (selected) Palette.accent else Palette.surfaceHi)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            color = if (selected) Color.White else Palette.text,
-            style = MaterialTheme.typography.labelLarge,
-        )
+    val view = LocalView.current
+    val grow = if (Dimens.animLevel == 2) 1f else if (Dimens.animLevel == 1) 1.025f else 1.06f
+    FilterChip(
+        selected = selected, onClick = onClick, onLongClick = onLongClick,
+        modifier = modifier.onFocusChanged { if (it.isFocused && Dimens.sounds) view.playSoundEffect(SoundEffectConstants.NAVIGATION_RIGHT) },
+        shape = FilterChipDefaults.shape(RoundedCornerShape(50)),
+        colors = FilterChipDefaults.colors(
+            containerColor = Palette.surfaceHi, contentColor = Palette.text,
+            focusedContainerColor = Palette.surfaceHi, focusedContentColor = Palette.text,
+            pressedContainerColor = Palette.surfaceHi, pressedContentColor = Palette.text,
+            selectedContainerColor = Palette.accent, selectedContentColor = Color.White,
+            focusedSelectedContainerColor = Palette.accent, focusedSelectedContentColor = Color.White,
+            pressedSelectedContainerColor = Palette.accent, pressedSelectedContentColor = Color.White,
+        ),
+        border = FilterChipDefaults.border(focusedBorder = Border(BorderStroke(2.dp, Palette.accent), shape = RoundedCornerShape(50)),
+            focusedSelectedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(50))),
+        scale = FilterChipDefaults.scale(focusedScale = grow),
+        glow = FilterChipDefaults.glow(),
+    ) {
+        Text(text, maxLines = 1, style = MaterialTheme.typography.labelLarge)
     }
 }
 
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun ActionButton(
     text: String, modifier: Modifier = Modifier, primary: Boolean = true, enabled: Boolean = true,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null, onClick: () -> Unit,
 ) {
-    FocusCard(modifier, RoundedCornerShape(10.dp), 1.05f, 2.dp, onClick = { if (enabled) onClick() }) {
+    val view = LocalView.current
+    val level = Dimens.animLevel
+    val shape = RoundedCornerShape(10.dp)
+    val grow = if (level == 2) 1f else if (level == 1) 1.02f else 1.05f
+    // Stays focusable when disabled (so a remote can still land on it); it just ignores the click.
+    androidx.tv.material3.Button(
+        onClick = { if (enabled) onClick() },
+        modifier = modifier.onFocusChanged { if (it.isFocused && Dimens.sounds) view.playSoundEffect(SoundEffectConstants.NAVIGATION_RIGHT) },
+        shape = ButtonDefaults.shape(shape),
+        colors = ButtonDefaults.colors(
+            containerColor = Color.Transparent, contentColor = Color.White,
+            focusedContainerColor = Color.Transparent, focusedContentColor = Color.White,
+            pressedContainerColor = Color.Transparent, pressedContentColor = Color.White,
+        ),
+        border = ButtonDefaults.border(focusedBorder = Border(BorderStroke(2.dp, Palette.accent), shape = shape)),
+        scale = ButtonDefaults.scale(focusedScale = grow, pressedScale = grow),
+        glow = ButtonDefaults.glow(focusedGlow = if (level == 0 && Dimens.glow) Glow(Palette.accent.copy(alpha = 0.5f), 14.dp) else Glow.None),
+        contentPadding = PaddingValues(0.dp),
+    ) {
         // The fill covers the whole button even when the caller makes it wider than its text.
-        Box(
-            Modifier.matchParentSize().background(
+        Row(
+            Modifier.fillMaxWidth().background(
                 if (primary) Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2))
                 else Brush.horizontalGradient(listOf(Palette.surfaceHi, Palette.surfaceHi))
-            )
-        )
-        Row(
-            Modifier.align(Alignment.Center).padding(horizontal = 20.dp, vertical = 11.dp),
+            ).padding(horizontal = 20.dp, vertical = 11.dp),
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (icon != null) {
@@ -444,6 +480,7 @@ fun ActionButton(
 }
 
 /** One highlighted row: used by menus and anywhere a plain list entry is enough. */
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun ListRow(
     title: String,
@@ -454,24 +491,28 @@ fun ListRow(
     onLongClick: () -> Unit = {},
     onClick: () -> Unit,
 ) {
-    FocusCard(modifier.fillMaxWidth(), RoundedCornerShape(10.dp), 1f, 2.dp, onLongClick, onClick) { focused ->
-        Row(
-            Modifier.fillMaxWidth()
-                .background(if (focused) Palette.accent.copy(alpha = 0.22f) else if (selected) Palette.surfaceHi else Palette.surface)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (icon.isNotBlank()) {
-                Artwork(icon, title, Modifier.padding(end = 12.dp).size(width = 56.dp, height = 40.dp).clip(RoundedCornerShape(6.dp)), ContentScale.Fit)
-            }
-            Column(Modifier.weight(1f)) {
-                Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (subtitle.isNotEmpty()) {
-                    Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Palette.muted, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-    }
+    val view = LocalView.current
+    val shape = RoundedCornerShape(10.dp)
+    ListItem(
+        selected = false, onClick = onClick, onLongClick = onLongClick,
+        modifier = modifier.fillMaxWidth().onFocusChanged { if (it.isFocused && Dimens.sounds) view.playSoundEffect(SoundEffectConstants.NAVIGATION_RIGHT) },
+        shape = ListItemDefaults.shape(shape),
+        colors = ListItemDefaults.colors(
+            containerColor = if (selected) Palette.surfaceHi else Palette.surface, contentColor = Palette.text,
+            focusedContainerColor = Palette.accent.copy(alpha = 0.22f).compositeOver(Palette.surface), focusedContentColor = Palette.text,
+            pressedContainerColor = Palette.accent.copy(alpha = 0.3f).compositeOver(Palette.surface), pressedContentColor = Palette.text,
+        ),
+        border = ListItemDefaults.border(focusedBorder = Border(BorderStroke(2.dp, Palette.accent), shape = shape)),
+        scale = ListItemDefaults.scale(focusedScale = 1f),
+        glow = ListItemDefaults.glow(),
+        leadingContent = if (icon.isBlank()) null else ({
+            Artwork(icon, title, Modifier.size(width = 56.dp, height = 40.dp).clip(RoundedCornerShape(6.dp)), ContentScale.Fit)
+        }),
+        supportingContent = if (subtitle.isEmpty()) null else ({
+            Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Palette.muted, style = MaterialTheme.typography.bodySmall)
+        }),
+        headlineContent = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+    )
 }
 
 @Composable
@@ -576,4 +617,14 @@ fun SpeakerIcon(size: Dp, color: Color, modifier: Modifier = Modifier) {
         drawPath(p, color)
         drawArc(color, -45f, 90f, false, Offset(s * 0.45f, s * 0.30f), Size(s * 0.40f, s * 0.40f), style = Stroke(s * 0.08f))
     }
+}
+
+/** Container for dialogs and panels, on Compose for TV's Surface. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun Panel(shape: Shape, content: @Composable () -> Unit) {
+    TvSurface(
+        shape = shape,
+        colors = androidx.tv.material3.SurfaceDefaults.colors(containerColor = Palette.surface, contentColor = Palette.text),
+    ) { content() }
 }

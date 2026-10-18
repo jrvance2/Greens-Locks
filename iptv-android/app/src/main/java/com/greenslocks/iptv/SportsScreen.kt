@@ -266,7 +266,7 @@ private fun GameDialog(g: Game, state: SportsState, onFind: () -> Unit, onRemind
     // Use most of the screen height, whatever the TV's resolution and density.
     val maxHeight = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.92f).dp
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(22.dp), color = Palette.surface, tonalElevation = 0.dp) {
+        Panel(RoundedCornerShape(22.dp)) {
             Column(Modifier.widthIn(min = 560.dp, max = 760.dp).heightIn(max = maxHeight).padding(horizontal = 24.dp, vertical = 18.dp)) {
                 val league = SPORT_LEAGUES.firstOrNull { it.key == g.league }
                 val info = listOfNotNull(
@@ -374,7 +374,7 @@ private fun ChannelFinderDialog(g: Game, find: suspend (List<String>) -> List<En
     LaunchedEffect(g.id) { hits = runCatching { ChannelMatch.rank(g, find(ChannelMatch.searchTerms(g))) }.getOrDefault(emptyList()) }
     LaunchedEffect(hits) { if (!hits.isNullOrEmpty()) { delay(100); runCatching { first.requestFocus() } } }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(20.dp), color = Palette.surface, tonalElevation = 0.dp) {
+        Panel(RoundedCornerShape(20.dp)) {
             Column(Modifier.widthIn(min = 520.dp, max = 720.dp).padding(20.dp)) {
                 Text(if (remind) "Remind me on which channel?" else "Where to watch", style = MaterialTheme.typography.titleLarge)
                 Text(

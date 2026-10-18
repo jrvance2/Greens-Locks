@@ -59,7 +59,7 @@ fun ActorDialog(name: String, movies: List<Entry>?, onOpen: (Entry) -> Unit, onD
     val first = remember { FocusRequester() }
     LaunchedEffect(movies) { if (!movies.isNullOrEmpty()) { delay(100); runCatching { first.requestFocus() } } }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(20.dp), color = Palette.surface, tonalElevation = 0.dp) {
+        Panel(RoundedCornerShape(20.dp)) {
             Column(Modifier.widthIn(min = 520.dp, max = 760.dp).padding(20.dp)) {
                 Text("Movies with $name in your library", style = MaterialTheme.typography.titleLarge)
                 when {
@@ -90,7 +90,7 @@ fun CrashDialog(report: String, path: String, onClear: () -> Unit, onDismiss: ()
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(100); runCatching { first.requestFocus() } }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(20.dp), color = Palette.surface, tonalElevation = 0.dp) {
+        Panel(RoundedCornerShape(20.dp)) {
             Column(Modifier.widthIn(min = 600.dp, max = 860.dp).padding(20.dp)) {
                 Text("Last crash", style = MaterialTheme.typography.titleLarge)
                 Text(

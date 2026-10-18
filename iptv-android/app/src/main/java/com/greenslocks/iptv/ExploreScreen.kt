@@ -209,7 +209,7 @@ private fun DiscoverInfo(item: DiscoverItem, onSearch: (String) -> Unit, onDismi
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(120); runCatching { first.requestFocus() } }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(20.dp), color = Palette.surface, tonalElevation = 0.dp) {
+        Panel(RoundedCornerShape(20.dp)) {
             Row(Modifier.widthIn(min = 560.dp, max = 760.dp).padding(22.dp)) {
                 Artwork(item.poster, item.title, Modifier.width(150.dp).size(width = 150.dp, height = 225.dp).clip(RoundedCornerShape(12.dp)))
                 Spacer(Modifier.width(20.dp))

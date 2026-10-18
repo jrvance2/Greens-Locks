@@ -161,8 +161,19 @@ fun IptvTheme(content: @Composable () -> Unit) {
                 error = Palette.live,
             ),
         ) {
-            Surface(color = Palette.bg, modifier = Modifier.fillMaxSize()) {
-                ProvideTextStyle(VanceTypography.bodyMedium, content = content)
+            androidx.tv.material3.MaterialTheme(
+                colorScheme = androidx.tv.material3.darkColorScheme(
+                    primary = Palette.accent, onPrimary = Color.White,
+                    secondary = Palette.accent2,
+                    background = Palette.bg, onBackground = Palette.text,
+                    surface = Palette.surface, onSurface = Palette.text,
+                    surfaceVariant = Palette.surfaceHi, onSurfaceVariant = Palette.muted,
+                    error = Palette.live,
+                ),
+            ) {
+                Surface(color = Palette.bg, modifier = Modifier.fillMaxSize()) {
+                    ProvideTextStyle(VanceTypography.bodyMedium, content = content)
+                }
             }
         }
     }

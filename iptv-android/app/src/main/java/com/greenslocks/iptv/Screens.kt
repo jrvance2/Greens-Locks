@@ -1,5 +1,6 @@
 package com.greenslocks.iptv
 
+import androidx.tv.material3.Tab as TvTab
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -78,46 +79,6 @@ fun RailIcon(type: RailIconType, color: Color, modifier: Modifier = Modifier.siz
         },
         null, modifier, tint = color,
     )
-}
-
-@Composable
-fun IconRail(
-    items: List<RailItem>,
-    modifier: Modifier = Modifier,
-    onItem: (RailIconType) -> Unit,
-) {
-    Column(
-        modifier.fillMaxHeight().background(Palette.surface).verticalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            Modifier.size(34.dp).clip(RoundedCornerShape(10.dp))
-                .background(Brush.linearGradient(listOf(Palette.accent, Palette.accent2))),
-            contentAlignment = Alignment.Center,
-        ) { Text("V", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp) }
-        Spacer(Modifier.height(4.dp))
-        items.forEachIndexed { _, item ->
-            FocusCard(Modifier.fillMaxWidth().padding(vertical = 1.dp), RoundedCornerShape(12.dp), 1f, 2.dp, onClick = { onItem(item.icon) }) { focused ->
-                Column(
-                    Modifier.fillMaxWidth()
-                        .background(
-                            if (focused) Palette.accent.copy(alpha = 0.3f)
-                            else if (item.selected) Palette.accent.copy(alpha = 0.18f) else Color.Transparent
-                        )
-                        .padding(vertical = 3.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    RailIcon(item.icon, if (item.selected || focused) Palette.accent else Palette.muted)
-                    if (Dimens.railLabels) Text(
-                        item.label, fontSize = 10.sp, maxLines = 1,
-                        color = if (item.selected || focused) Palette.text else Palette.muted,
-                        modifier = Modifier.padding(top = 3.dp),
-                    )
-                }
-            }
-        }
-    }
 }
 
 // ------------------------------------------------------------------ login
@@ -652,7 +613,8 @@ fun SplashScreen() {
     }
 }
 
-/** Navigation across the top of the screen instead of down the side. */
+/** Navigation across the top of the screen instead of down the side (Compose for TV tab row). */
+@OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 @Composable
 fun TopNav(items: List<RailItem>, modifier: Modifier = Modifier, onItem: (RailIconType) -> Unit) {
     Row(
@@ -661,22 +623,30 @@ fun TopNav(items: List<RailItem>, modifier: Modifier = Modifier, onItem: (RailIc
     ) {
         BrandWordmark(15.sp)
         Spacer(Modifier.width(22.dp))
-        items.forEach { item ->
-            FocusCard(Modifier.padding(horizontal = 3.dp), RoundedCornerShape(50), 1f, 2.dp, onClick = { onItem(item.icon) }) { focused ->
-                Row(
-                    Modifier.background(
-                        if (focused) Palette.accent.copy(alpha = 0.30f)
-                        else if (item.selected) Palette.accent.copy(alpha = 0.18f) else Color.Transparent
-                    ).padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+        androidx.tv.material3.TabRow(
+            selectedTabIndex = items.indexOfFirst { it.selected }.coerceAtLeast(0),
+            indicator = { _, _ -> },
+            separator = { Spacer(Modifier.width(4.dp)) },
+        ) {
+            items.forEachIndexed { i, item ->
+                TvTab(
+                    selected = item.selected, onFocus = {}, onClick = { onItem(item.icon) },
+                    colors = androidx.tv.material3.TabDefaults.pillIndicatorTabColors(
+                        contentColor = Palette.muted, selectedContentColor = Palette.text,
+                        focusedContentColor = Palette.text, focusedSelectedContentColor = Palette.text,
+                    ),
                 ) {
-                    RailIcon(item.icon, if (item.selected || focused) Palette.accent else Palette.muted)
-                    if (Dimens.railLabels) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            item.label, maxLines = 1, style = MaterialTheme.typography.labelLarge,
-                            color = if (item.selected || focused) Palette.text else Palette.muted,
-                        )
+                    Row(
+                        Modifier.clip(RoundedCornerShape(50))
+                            .background(if (item.selected) Palette.accent.copy(alpha = 0.18f) else Color.Transparent)
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RailIcon(item.icon, if (item.selected) Palette.accent else Palette.muted)
+                        if (Dimens.railLabels) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(item.label, maxLines = 1, style = MaterialTheme.typography.labelLarge)
+                        }
                     }
                 }
             }

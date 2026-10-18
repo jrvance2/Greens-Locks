@@ -4,6 +4,7 @@
 - Build: Kotlin 2.4.21 with the Compose compiler plugin (was Kotlin 1.9.24). Strong skipping is now on, so screens redraw less; if any list or row fails to update, report it.
 - Build: newer Compose libraries (1.10) and Compose for TV (tv-material 1.1.0) added, Android Gradle plugin 8.13, compile SDK 36; the main screen function is split into chunks so it stays under the JVM method-size limit.
 - Compose for TV: the side rail is now the TV navigation drawer (icons collapsed, slides open with labels when focused, overlays the page instead of squeezing it); On/Off settings use TV switches.
+- Compose for TV, everywhere it applies: every card, row and tile now sits on the TV Surface (focus scale, ring, glow, click and long-click); buttons are TV Buttons, chips are TV filter chips, list entries are TV list items, dialogs and panels are TV surfaces, the top navigation is a TV tab row, and the app theme is also a TV theme.
 - Sports: "Live sports" row on Home (games in progress, followed teams first; Settings > Sports > Live sports on Home); "Remind me at kickoff" on upcoming games (pick the channel; you're switched over at the start, same as programme reminders).
 
 ## 1.2.54 (stable; same code as beta 53)

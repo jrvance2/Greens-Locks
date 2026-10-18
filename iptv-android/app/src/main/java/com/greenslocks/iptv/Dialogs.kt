@@ -35,7 +35,7 @@ fun ActionMenuDialog(title: String, items: List<MenuItem>, onDismiss: () -> Unit
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(100); runCatching { first.requestFocus() } }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(18.dp), color = Palette.surface, tonalElevation = 0.dp) {
+        Panel(RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(16.dp).widthIn(min = 320.dp, max = 520.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
@@ -79,7 +79,7 @@ fun PinPadDialog(title: String, error: String?, onDone: (String) -> Unit, onCanc
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(100); runCatching { first.requestFocus() } }
     Dialog(onDismissRequest = onCancel) {
-        Surface(shape = RoundedCornerShape(18.dp), color = Palette.surface, tonalElevation = 0.dp) {
+        Panel(RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 Text(
