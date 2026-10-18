@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalView
 import android.view.SoundEffectConstants
@@ -346,6 +347,15 @@ fun WideCard(
     }
 }
 
+/** After coming back from a movie page, puts focus back on the poster you opened. */
+@Composable
+fun restoreFocusModifier(key: String, restoreKey: String?, pending: Boolean, skip: Boolean, onRestored: () -> Unit): Modifier {
+    if (!pending || skip || restoreKey != key) return Modifier
+    val fr = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(500); runCatching { fr.requestFocus() }; onRestored() }
+    return Modifier.focusRequester(fr)
+}
+
 @Composable
 fun ShelfRow(
     title: String,
@@ -360,6 +370,9 @@ fun ShelfRow(
     firstFocus: Modifier = Modifier,
     onFocusEntry: (Entry) -> Unit = {},
     badgeOf: (Entry) -> String? = { null },
+    restoreKey: String? = null,
+    restorePending: Boolean = false,
+    onRestored: () -> Unit = {},
 ) {
     var rowActive by remember { mutableStateOf(false) }
     Column(Modifier.onFocusChanged { rowActive = it.hasFocus }) {
@@ -369,7 +382,7 @@ fun ShelfRow(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             itemsIndexed(items) { i, e ->
-                val mod = if (i == 0) firstFocus else Modifier
+                val mod = (if (i == 0) firstFocus else Modifier).then(restoreFocusModifier(e.key(), restoreKey, restorePending, i == 0, onRestored))
                 if (wide) {
                     WideCard(
                         titleOf(e), subtitleOf(e), e.icon, isFavorite(e), progressOf(e), mod,

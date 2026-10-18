@@ -38,6 +38,19 @@ data class Detail(
     val cast: List<String> = emptyList(),
     val backdrop: String = "",
     val tagline: String = "",
+    /** From the provider: "HEVC · 3840x2160 · 5.1 · 12.0 Mbps · MKV". */
+    val tech: String = "",
+    /** Age rating such as PG-13 or TV-MA. */
+    val certification: String = "",
+    /** TMDB person ids, parallel to [cast]. */
+    val castIds: List<Int> = emptyList(),
+    val director: String = "",
+    val imdbId: String = "",
+    val collectionId: Int = 0,
+    val collectionName: String = "",
+    val similar: List<DiscoverItem> = emptyList(),
+    /** "IMDb 8.5 · RT 92% · Meta 79" when an OMDb key is set. */
+    val ratings: String = "",
 )
 
 data class Programme(val title: String, val start: Long, val stop: Long, val archive: Boolean = false)

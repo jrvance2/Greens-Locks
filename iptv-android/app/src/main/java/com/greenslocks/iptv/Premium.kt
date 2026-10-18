@@ -28,29 +28,52 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
-/** "8.1 · 2021 · Action, Drama · 2h 10m" -> separate pills, plus a quality badge read from the title. */
+/** "8.1 · 2021 · Action, Drama · 2h 10m" -> separate pills, plus quality, age rating, format words and "added" info. */
 @Composable
-fun MetaChips(meta: String, title: String, modifier: Modifier = Modifier) {
+fun MetaChips(
+    meta: String, title: String, modifier: Modifier = Modifier,
+    certification: String = "", tags: List<String> = emptyList(), added: Long = 0L, watched: Boolean = false,
+) {
     val parts = remember(meta) { meta.split(Regex("\\s*[\\u00B7|\\u2022]\\s*")).map { it.trim() }.filter { it.isNotEmpty() } }
     val quality = remember(title) { qualityBadge(title) }
-    if (parts.isEmpty() && quality == null) return
+    val addedLabel = remember(added) { AddedText.label(added, System.currentTimeMillis()) }
+    val isNew = remember(added) { AddedText.isNew(added, System.currentTimeMillis()) }
+    if (parts.isEmpty() && quality == null && certification.isBlank() && tags.isEmpty() && addedLabel == null && !watched) return
+    fun gradient(text: String): @Composable () -> Unit = {
+        Text(
+            text, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2)))
+                .padding(horizontal = 9.dp, vertical = 3.dp),
+        )
+    }
     LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (quality != null) itemsIndexed(listOf(quality)) { _, q ->
+        if (isNew) item { gradient("NEW")() }
+        if (watched) item { gradient("\u2713 Watched")() }
+        if (quality != null) item { gradient(quality)() }
+        if (certification.isNotBlank()) item {
             Text(
-                q, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2)))
-                    .padding(horizontal = 9.dp, vertical = 3.dp),
+                certification, color = Palette.text, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).border(1.dp, Palette.text.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
             )
         }
         itemsIndexed(parts) { i, p ->
             Text(
-                if (i == 0 && p.toDoubleOrNull() != null) "★ $p" else p,
+                if (i == 0 && p.toDoubleOrNull() != null) "\u2605 $p" else p,
                 color = Palette.text.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.10f))
                     .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(6.dp))
                     .padding(horizontal = 9.dp, vertical = 3.dp),
             )
         }
+        itemsIndexed(tags) { _, t ->
+            Text(
+                t, color = Palette.accent, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).border(1.dp, Palette.accent.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
+        if (addedLabel != null) item { Text(addedLabel, color = Palette.muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp)) }
     }
 }
 
@@ -68,22 +91,29 @@ fun qualityBadge(title: String): String? {
     }
 }
 
-/** Cast as round initials with first names, in a single scrolling row. */
+/** Cast as round initials with first names, in a single scrolling row. Select an actor to see their movies in your library. */
 @Composable
-fun CastRow(cast: List<String>, modifier: Modifier = Modifier) {
+fun CastRow(cast: List<String>, ids: List<Int> = emptyList(), onActor: (String, Int) -> Unit = { _, _ -> }, modifier: Modifier = Modifier) {
     if (cast.isEmpty()) return
-    LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        itemsIndexed(cast.take(10)) { _, n ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(34.dp).clip(CircleShape).background(avatarBrush(n)),
-                    contentAlignment = Alignment.Center,
-                ) { Text(initialsOf(n), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                Text(
-                    n, Modifier.padding(start = 8.dp).widthIn(max = 130.dp), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    color = Palette.muted, style = MaterialTheme.typography.bodySmall,
-                )
+    LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        itemsIndexed(cast.take(10)) { i, n ->
+            val id = ids.getOrNull(i) ?: 0
+            val chip: @Composable (Boolean) -> Unit = { focused ->
+                Row(
+                    Modifier.background(if (focused) Palette.accent.copy(alpha = 0.25f) else Color.Transparent).padding(horizontal = 6.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(34.dp).clip(CircleShape).background(avatarBrush(n)), contentAlignment = Alignment.Center) {
+                        Text(initialsOf(n), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        n, Modifier.padding(start = 8.dp).widthIn(max = 130.dp), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = if (focused) Palette.text else Palette.muted, style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
+            if (id > 0) FocusCard(Modifier, RoundedCornerShape(50), 1.04f, 2.dp, onClick = { onActor(n, id) }) { focused -> chip(focused) }
+            else chip(false)
         }
     }
 }

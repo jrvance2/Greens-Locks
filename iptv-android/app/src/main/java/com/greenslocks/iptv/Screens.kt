@@ -310,6 +310,13 @@ fun DetailScreen(
     onMyList: () -> Unit,
     onTrailer: () -> Unit,
     onEpisode: (Entry) -> Unit,
+    versions: List<Entry> = emptyList(),
+    onVersion: (Entry) -> Unit = {},
+    rows: List<Pair<String, List<Entry>>> = emptyList(),
+    onOpenEntry: (Entry) -> Unit = {},
+    onActor: (String, Int) -> Unit = { _, _ -> },
+    watched: Boolean = false,
+    onToggleWatched: () -> Unit = {},
 ) {
     val first = remember { FocusRequester() }
     LaunchedEffect(entry.key(), episodes.size) { delay(250); runCatching { first.requestFocus() } }
@@ -340,35 +347,65 @@ fun DetailScreen(
                     .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(14.dp)),
             )
             Spacer(Modifier.width(32.dp))
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f).then(if (entry.kind == Kind.SERIES) Modifier else Modifier.verticalScroll(rememberScrollState()))) {
                 Text(name, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (detail == null) {
                     Text("Loading details…", color = Palette.muted, modifier = Modifier.padding(top = 6.dp))
                 } else {
                     if (detail.tagline.isNotBlank()) Text(detail.tagline, color = Palette.muted, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, modifier = Modifier.padding(top = 4.dp))
-                    MetaChips(detail.meta, entry.title, Modifier.padding(top = 8.dp))
+                    MetaChips(
+                        detail.meta, entry.title, Modifier.padding(top = 8.dp),
+                        certification = detail.certification, tags = remember(entry.title) { TechInfo.formatTags(entry.title) },
+                        added = entry.added, watched = watched,
+                    )
+                    if (detail.ratings.isNotBlank()) Text(detail.ratings, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                    if (detail.tech.isNotBlank()) Text(detail.tech, color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                }
+                if (versions.size > 1) {
+                    Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Versions", color = Palette.muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 10.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            itemsIndexed(versions) { _, v -> Chip(TechInfo.qualityLabel(v.title), v.id == entry.id) { if (v.id != entry.id) onVersion(v) } }
+                        }
+                    }
+                }
+                if (detail != null) {
                     if (detail.plot.isNotBlank()) {
                         Text(detail.plot, maxLines = 5, overflow = TextOverflow.Ellipsis, color = Palette.text.copy(alpha = 0.85f), modifier = Modifier.padding(top = 10.dp))
                     }
-                    CastRow(detail.cast, Modifier.padding(top = 12.dp))
-                }
-                Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (entry.kind == Kind.MOVIE) {
-                        ActionButton(
-                            if (resumeMs > 15_000) "Resume ${fmtTime(resumeMs)}" else "Play",
-                            Modifier.focusRequester(first), icon = Icons.Rounded.PlayArrow, onClick = onPlay,
+                    CastRow(detail.cast, detail.castIds, onActor, Modifier.padding(top = 12.dp))
+                    if (detail.director.isNotBlank()) {
+                        Text(
+                            (if (entry.kind == Kind.SERIES) "Created by " else "Directed by ") + detail.director,
+                            color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp),
                         )
-                        if (resumeMs > 15_000) ActionButton("Restart", primary = false, icon = Icons.Rounded.Replay, onClick = onRestart)
                     }
-                    ActionButton(
-                        if (isFavorite) "Favorited" else "Add to favorites", primary = false,
-                        icon = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                        modifier = if (entry.kind == Kind.MOVIE) Modifier else Modifier.focusRequester(first),
-                        onClick = onFavorite,
-                    )
-                    ActionButton(if (inMyList) "In My list" else "My list", primary = false, icon = if (inMyList) Icons.Rounded.Check else Icons.Rounded.Add, onClick = onMyList)
-                    if (!detail?.trailer.isNullOrBlank()) ActionButton("Trailer", primary = false, icon = Icons.Rounded.Movie, onClick = onTrailer)
                 }
+                LazyRow(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 6.dp, horizontal = 2.dp)) {
+                    if (entry.kind == Kind.MOVIE) {
+                        item {
+                            ActionButton(
+                                if (resumeMs > 15_000) "Resume ${fmtTime(resumeMs)}" else "Play",
+                                Modifier.focusRequester(first), icon = Icons.Rounded.PlayArrow, onClick = onPlay,
+                            )
+                        }
+                        if (resumeMs > 15_000) item { ActionButton("Restart", primary = false, icon = Icons.Rounded.Replay, onClick = onRestart) }
+                    }
+                    item {
+                        ActionButton(
+                            if (isFavorite) "Favorited" else "Add to favorites", primary = false,
+                            icon = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                            modifier = if (entry.kind == Kind.MOVIE) Modifier else Modifier.focusRequester(first),
+                            onClick = onFavorite,
+                        )
+                    }
+                    item { ActionButton(if (inMyList) "In My list" else "My list", primary = false, icon = if (inMyList) Icons.Rounded.Check else Icons.Rounded.Add, onClick = onMyList) }
+                    if (!detail?.trailer.isNullOrBlank()) item { ActionButton("Trailer", primary = false, icon = Icons.Rounded.Movie, onClick = onTrailer) }
+                    if (entry.kind == Kind.MOVIE) item {
+                        ActionButton(if (watched) "Mark unwatched" else "Mark watched", primary = false, icon = Icons.Rounded.Check, onClick = onToggleWatched)
+                    }
+                }
+                if (entry.kind == Kind.MOVIE) rows.forEach { (title, list) -> DetailRow(title, list, onOpenEntry) }
                 if (entry.kind == Kind.SERIES) {
                     if (seasons.size > 1) {
                         LazyRow(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 6.dp)) {

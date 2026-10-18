@@ -40,8 +40,11 @@ object TmdbDiscover {
         Triple("Popular series", "tv/popular", true),
     )
 
-    fun parse(text: String, tv: Boolean): List<DiscoverItem> {
-        val arr = JSONObject(text).optJSONArray("results") ?: return emptyList()
+    fun parse(text: String, tv: Boolean): List<DiscoverItem> =
+        parseArray(JSONObject(text).optJSONArray("results"), tv)
+
+    fun parseArray(arr: org.json.JSONArray?, tv: Boolean): List<DiscoverItem> {
+        if (arr == null) return emptyList()
         val out = ArrayList<DiscoverItem>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue

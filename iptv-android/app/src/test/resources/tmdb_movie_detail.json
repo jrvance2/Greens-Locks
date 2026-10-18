@@ -1,0 +1,7 @@
+{"id":693134,"title":"Dune: Part Two","overview":"Paul Atreides unites with the Fremen.","tagline":"Long live the fighters.","runtime":166,"release_date":"2024-02-27","vote_average":8.2,"imdb_id":"tt15239678",
+"poster_path":"/p.jpg","backdrop_path":"/b.jpg","genres":[{"id":878,"name":"Science Fiction"},{"id":12,"name":"Adventure"}],
+"belongs_to_collection":{"id":726871,"name":"Dune Collection"},
+"credits":{"cast":[{"id":1190668,"name":"Timothée Chalamet"},{"id":505710,"name":"Zendaya"},{"id":0,"name":""}],"crew":[{"job":"Producer","name":"Mary Parent"},{"job":"Director","name":"Denis Villeneuve"}]},
+"videos":{"results":[{"site":"Vimeo","type":"Trailer","key":"no"},{"site":"YouTube","type":"Trailer","key":"Way9Dexny3w"}]},
+"release_dates":{"results":[{"iso_3166_1":"GB","release_dates":[{"certification":"12A"}]},{"iso_3166_1":"US","release_dates":[{"certification":""},{"certification":"PG-13"}]}]},
+"recommendations":{"page":1,"results":[{"id":438631,"title":"Dune","release_date":"2021-09-15","poster_path":"/d.jpg","vote_average":7.8},{"id":335984,"title":"Blade Runner 2049","release_date":"2017-10-04","poster_path":null,"vote_average":7.5}]}}

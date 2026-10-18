@@ -198,6 +198,7 @@ class XtreamProvider(
             meta = meta,
             poster = field("movie_image", "cover", "cover_big").ifEmpty { entry.icon },
             trailer = field("youtube_trailer"),
+            tech = if (entry.kind == Kind.MOVIE) TechInfo.describe(info, entry.ext) else "",
         )
     }
 

@@ -2,6 +2,7 @@ package com.greenslocks.iptv
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
 import java.net.URLEncoder
@@ -46,13 +47,44 @@ object Tmdb {
         else "https://image.tmdb.org/t/p/w1280$path".also { backdrops[ck] = it }
     }
 
+    /** Where movie pages are kept between runs (set at startup). */
+    @Volatile var cacheDir: java.io.File? = null
+
+    private fun diskFile(ck: String): java.io.File? =
+        cacheDir?.let { java.io.File(it, "tmdb_" + java.security.MessageDigest.getInstance("MD5").digest(ck.toByteArray()).joinToString("") { b -> "%02x".format(b) } + ".json") }
+
     suspend fun lookup(key: String, rawTitle: String, tv: Boolean): Detail? = withContext(Dispatchers.IO) {
         val ck = "${if (tv) "tv" else "movie"}:$rawTitle"
         details[ck]?.let { return@withContext it }
         if (ck in misses) return@withContext null
+        // Saved pages stay good for a week.
+        diskFile(ck)?.takeIf { it.exists() && System.currentTimeMillis() - it.lastModified() < 7 * 86_400_000L }
+            ?.let { f -> runCatching { DetailJson.decode(f.readText()) }.getOrNull() }
+            ?.let { details[ck] = it; return@withContext it }
         val found = fetchDetail(key, rawTitle, tv)
-        if (found != null) details[ck] = found else misses += ck
+        if (found != null) {
+            details[ck] = found
+            diskFile(ck)?.let { f -> runCatching { f.writeText(DetailJson.encode(found)) } }
+        } else misses += ck
         found
+    }
+
+    /** The other movies of a collection ("Dune Collection"), oldest first. */
+    suspend fun collection(key: String, id: Int): List<DiscoverItem> = withContext(Dispatchers.IO) {
+        runCatching {
+            val parts = JSONObject(get("https://api.themoviedb.org/3/collection/$id?api_key=$key")).optJSONArray("parts")
+            TmdbDiscover.parseArray(parts, tv = false).sortedBy { it.year }
+        }.getOrDefault(emptyList())
+    }
+
+    /** An actor's best-known movies, most popular first. */
+    suspend fun personMovies(key: String, personId: Int): List<DiscoverItem> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cast = JSONObject(get("https://api.themoviedb.org/3/person/$personId/movie_credits?api_key=$key")).optJSONArray("cast")
+                ?: return@runCatching emptyList()
+            val sorted = (0 until cast.length()).mapNotNull { cast.optJSONObject(it) }.sortedByDescending { it.optDouble("popularity", 0.0) }.take(40)
+            TmdbDiscover.parseArray(JSONArray(sorted), tv = false)
+        }.getOrDefault(emptyList())
     }
 
     private fun fetchDetail(key: String, rawTitle: String, tv: Boolean): Detail? {
@@ -65,11 +97,50 @@ object Tmdb {
             .optJSONArray("results") ?: return null
         val id = results.optJSONObject(0)?.optInt("id", 0) ?: return null
         if (id == 0) return null
-        val d = JSONObject(get("https://api.themoviedb.org/3/$type/$id?api_key=$key&append_to_response=credits,videos"))
+        val extra = if (tv) "credits,videos,content_ratings,recommendations,external_ids" else "credits,videos,release_dates,recommendations"
+        return parseDetail(JSONObject(get("https://api.themoviedb.org/3/$type/$id?api_key=$key&append_to_response=$extra")), tv)
+    }
 
-        val cast = d.optJSONObject("credits")?.optJSONArray("cast")?.let { a ->
-            List(minOf(a.length(), 10)) { a.getJSONObject(it).optString("name") }.filter { it.isNotBlank() }
-        }.orEmpty()
+    /** Age rating for [region] from TMDB's release dates (movies) or content ratings (series). */
+    fun certification(d: JSONObject, tv: Boolean, region: String = "US"): String {
+        if (tv) {
+            val a = d.optJSONObject("content_ratings")?.optJSONArray("results") ?: return ""
+            for (i in 0 until a.length()) {
+                val o = a.optJSONObject(i) ?: continue
+                if (o.optString("iso_3166_1") == region) return o.optString("rating")
+            }
+        } else {
+            val a = d.optJSONObject("release_dates")?.optJSONArray("results") ?: return ""
+            for (i in 0 until a.length()) {
+                val o = a.optJSONObject(i) ?: continue
+                if (o.optString("iso_3166_1") != region) continue
+                val rd = o.optJSONArray("release_dates") ?: continue
+                for (j in 0 until rd.length()) {
+                    val c = rd.optJSONObject(j)?.optString("certification").orEmpty()
+                    if (c.isNotBlank()) return c
+                }
+            }
+        }
+        return ""
+    }
+
+    fun parseDetail(d: JSONObject, tv: Boolean): Detail {
+        val castArr = d.optJSONObject("credits")?.optJSONArray("cast")
+        val cast = ArrayList<String>()
+        val castIds = ArrayList<Int>()
+        if (castArr != null) for (i in 0 until minOf(castArr.length(), 10)) {
+            val c = castArr.optJSONObject(i) ?: continue
+            val n = c.optString("name")
+            if (n.isNotBlank()) { cast += n; castIds += c.optInt("id", 0) }
+        }
+        var director = ""
+        d.optJSONObject("credits")?.optJSONArray("crew")?.let { a ->
+            for (i in 0 until a.length()) {
+                val o = a.optJSONObject(i) ?: continue
+                if (o.optString("job") == "Director") { director = o.optString("name"); break }
+            }
+        }
+        if (tv && director.isBlank()) director = d.optJSONArray("created_by")?.optJSONObject(0)?.optString("name").orEmpty()
         var trailer = ""
         d.optJSONObject("videos")?.optJSONArray("results")?.let { a ->
             for (i in 0 until a.length()) {
@@ -88,6 +159,7 @@ object Tmdb {
             if (minutes > 0) "${minutes / 60}h %02dm".format(minutes % 60).removePrefix("0h ") else null,
         ).joinToString("  ·  ")
         fun img(path: String, size: String) = if (path.isBlank() || path == "null") "" else "https://image.tmdb.org/t/p/$size$path"
+        val col = d.optJSONObject("belongs_to_collection")
         return Detail(
             plot = d.optString("overview"),
             meta = meta,
@@ -96,6 +168,13 @@ object Tmdb {
             cast = cast,
             backdrop = img(d.optString("backdrop_path"), "w1280"),
             tagline = d.optString("tagline"),
+            certification = certification(d, tv),
+            castIds = castIds,
+            director = director,
+            imdbId = d.optString("imdb_id").ifBlank { d.optJSONObject("external_ids")?.optString("imdb_id").orEmpty() }.takeIf { it != "null" }.orEmpty(),
+            collectionId = col?.optInt("id", 0) ?: 0,
+            collectionName = col?.optString("name").orEmpty(),
+            similar = TmdbDiscover.parseArray(d.optJSONObject("recommendations")?.optJSONArray("results"), tv).take(15),
         )
     }
 
@@ -111,6 +190,13 @@ object Tmdb {
             cast = t.cast.ifEmpty { base.cast },
             backdrop = t.backdrop.ifBlank { base.backdrop },
             tagline = t.tagline.ifBlank { base.tagline },
+            tech = base.tech.ifBlank { t.tech },
+            certification = t.certification.ifBlank { base.certification },
+            castIds = if (t.cast.isNotEmpty()) t.castIds else base.castIds,
+            director = t.director.ifBlank { base.director },
+            imdbId = t.imdbId.ifBlank { base.imdbId },
+            collectionId = t.collectionId, collectionName = t.collectionName,
+            similar = t.similar, ratings = base.ratings.ifBlank { t.ratings },
         )
     }
 }

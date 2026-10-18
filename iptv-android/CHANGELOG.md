@@ -1,6 +1,9 @@
 # Vance TV changelog
 
 ## Beta (next)
+- Movie page: other versions of a title in your library (4K / 1080p / HD) you can switch to; format badges (HDR, Dolby Vision, Atmos, 5.1...); technical line from your provider (codec, resolution, audio, bitrate); age rating; IMDb / Rotten Tomatoes / Metacritic scores (needs a free OMDb key in Settings); director; tap an actor to see their movies in your library; More like this and collection rows (only titles you have); Mark watched/unwatched with a Watched tag; "Added N days ago" and NEW.
+- Posters: larger on-disk cache that ignores no-cache headers, lighter decoding. TMDB movie pages are saved for a week so they open instantly. Back from a movie page returns to the poster you opened.
+- Settings > About > Last crash: shows the last crash error on the TV (also saved as crash.log).
 - Explore (new tab): Discover (TMDB trending/in theaters/coming soon/top rated/popular series, each matched to your library with an IN LIBRARY badge), Tonight (what's on now / later / prime time across your channels from the extra guide, with genre filters), My agenda (reminders, scheduled recordings and followed teams' games in time order).
 - Fix: buttons now fill their full width (no dark patch showing through the glow); Sports game card focus drawing; game detail keeps the scoreboard and buttons on screen.
 - Sports hub (new tab): live scores, schedules and standings for NFL, NBA, MLB, NHL, college football/basketball, WNBA, MLS, Premier League, La Liga, Bundesliga, Serie A, Champions League and UFC; Live now across leagues; follow teams (My teams); game detail with line scores and top performers; "Find on my channels" matches a game to your channels by team names and TV network. Data: ESPN public scoreboard feed.

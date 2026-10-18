@@ -92,6 +92,19 @@ class MainActivity : ComponentActivity() {
         applyAppearance(store.int("accent", 0), store.int("bg", 0), store.int("cards", 1), store.int("text", 1), store.int("anim", 0), store.int("ui", 1))
         LayoutPrefs.load(store)
         Net.setMode(store.int("uaMode", 0))
+        CrashLog.install(this)
+        Tmdb.cacheDir = cacheDir
+        intent.getStringExtra("omdb_key")?.let { store.setGString("omdbKey", it) }
+        // Posters: keep more on disk (providers often forbid caching), and decode them lighter to save memory.
+        coil.Coil.setImageLoader(
+            coil.ImageLoader.Builder(this)
+                .okHttpClient(Net.client)
+                .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(0.22).build() }
+                .diskCache { coil.disk.DiskCache.Builder().directory(cacheDir.resolve("img")).maxSizeBytes(250L shl 20).build() }
+                .allowRgb565(true)
+                .respectCacheHeaders(false)
+                .build()
+        )
         pendingLaunch.value = intent.getStringExtra("play_entry")
         setContent { IptvTheme { App() } }
     }
@@ -279,6 +292,15 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     var reminders by mutableStateOf(store.list("reminders"))
     var newEps by mutableStateOf(store.list("newEps"))
     var playing by mutableStateOf(false)
+    var versions by mutableStateOf<List<Entry>>(emptyList())
+    var detailRows by mutableStateOf<List<Pair<String, List<Entry>>>>(emptyList())
+    var watched by mutableStateOf(store.list("watched").toSet())
+    var omdbKey by mutableStateOf(store.gString("omdbKey").orEmpty())
+    var actor by mutableStateOf<Pair<String, Int>?>(null)
+    var actorMovies by mutableStateOf<List<Entry>?>(null)
+    var restoreKey by mutableStateOf<String?>(null)
+    var restorePending by mutableStateOf(false)
+    var crashShown by mutableStateOf(false)
     val knownStamps = mutableMapOf<String, Long>()
     var dueReminder by mutableStateOf<Reminder?>(null)
     var remindersOpen by mutableStateOf(false)
@@ -662,8 +684,15 @@ private fun AppState.AppBody() {
         return lockAdult && isAdult(name)
     }
     fun visible(e: Entry) = (showHidden || e.key() !in hiddenEntries) && !entryLocked(e)
+    fun toggleWatched(e: Entry) {
+        val k = e.key()
+        watched = if (k in watched) watched - k else watched + k
+        store.setList("watched", watched.toList())
+        if (k in watched) store.remove(posKey(e))
+    }
     fun progressOf(e: Entry): Float? {
         if (e.kind == Kind.LIVE) return null
+        if (e.key() in watched) return 1f
         val pos = store.long(posKey(e))
         val dur = store.long(durKey(e))
         return if (pos > 15_000 && dur > 0) (pos.toFloat() / dur).coerceIn(0.02f, 0.98f) else null
@@ -825,6 +854,11 @@ private fun AppState.AppBody() {
             if (tmdbKey.isNotBlank()) {
                 val t = runCatching { Tmdb.lookup(tmdbKey, e.title, e.kind == Kind.SERIES) }.getOrNull()
                 if (t != null && detailEntry?.key() == e.key()) detail = Tmdb.merge(detail, t)
+            }
+            val imdb = detail?.imdbId.orEmpty()
+            if (omdbKey.isNotBlank() && imdb.isNotBlank()) {
+                val r = Omdb.ratings(omdbKey, imdb)
+                if (r.isNotBlank() && detailEntry?.key() == e.key()) detail = detail?.copy(ratings = r)
             }
         }
     }
@@ -1082,6 +1116,9 @@ private fun AppState.AppBody() {
         detailEntry = null; detail = null; series = null; episodes = emptyList()
         if (pausedForDetail && current != null) reloadTick++ // resume what the detail page paused
         pausedForDetail = false
+        restorePending = restoreKey != null
+        // Only for the screen you came from: don't let the request linger and grab focus on another screen later.
+        if (restorePending) scope.launch { delay(2_500); restorePending = false }
         listVersion++
     }
     fun playNow(e: Entry, full: Boolean) {
@@ -1093,6 +1130,7 @@ private fun AppState.AppBody() {
         if (full) fullscreen = true
     }
     fun onEntry(e: Entry) {
+        if (e.kind == Kind.MOVIE || e.kind == Kind.SERIES) restoreKey = e.key()
         when (e.kind) {
             Kind.SERIES -> openSeries(e)
             Kind.MOVIE -> openMovie(e)
@@ -1372,8 +1410,14 @@ private fun AppState.AppBody() {
             val d = player.duration
             val pos = player.currentPosition
             if (d > 0) store.setLong(durKey(e), d)
-            if (d > 0 && pos > d - 30_000) store.remove(posKey(e))
-            else if (player.isPlaying) store.setLong(posKey(e), pos)
+            if (d > 0 && pos > d - 30_000) {
+                store.remove(posKey(e))
+                if (e.key() !in watched) { watched = watched + e.key(); store.setList("watched", watched.toList()) }
+            } else if (player.isPlaying) {
+                store.setLong(posKey(e), pos)
+                // Watching it again: it isn't "watched" until it finishes again.
+                if (pos > 60_000 && e.key() in watched) { watched = watched - e.key(); store.setList("watched", watched.toList()) }
+            }
         }
     }
     LaunchedEffect(current, now / 300_000, epgShift, chShifts, xmltvTick) {
@@ -1537,6 +1581,41 @@ private fun AppState.AppBody() {
         }
     }
     LaunchedEffect(fullscreen) { if (fullscreen) { delay(50); runCatching { rootFocus.requestFocus() } } }
+    // Other copies of the title in your library (4K, 1080p, HD...) for the movie page.
+    LaunchedEffect(detailEntry?.key()) {
+        versions = emptyList()
+        val e = detailEntry ?: return@LaunchedEffect
+        if (e.kind != Kind.MOVIE && e.kind != Kind.SERIES) return@LaunchedEffect
+        val found = withContext(Dispatchers.IO) { runCatching { index.search(LibraryMatch.searchQuery(e.title), 60)[e.kind].orEmpty() }.getOrDefault(emptyList()) }
+        val key = LibraryMatch.key(e.title)
+        val year = Tmdb.cleanTitle(e.title).second
+        val same = (found + e).distinctBy { it.id }.filter { v ->
+            LibraryMatch.key(v.title) == key && (year == null || Tmdb.cleanTitle(v.title).second.let { y -> y == null || y == year })
+        }
+        versions = if (same.size > 1) same.sortedByDescending { qualityScore(it.title) } else emptyList()
+    }
+    // "More like this" and the movie's collection, limited to titles you actually have.
+    LaunchedEffect(detailEntry?.key(), detail?.similar?.size, detail?.collectionId) {
+        detailRows = emptyList()
+        val e = detailEntry ?: return@LaunchedEffect
+        val d = detail ?: return@LaunchedEffect
+        if (e.kind != Kind.MOVIE) return@LaunchedEffect
+        suspend fun inLibrary(items: List<DiscoverItem>): List<Entry> {
+            val out = ArrayList<Entry>()
+            for (item in items) {
+                val c = withContext(Dispatchers.IO) { runCatching { index.search(LibraryMatch.searchQuery(item.title), 60)[Kind.MOVIE].orEmpty() }.getOrDefault(emptyList()) }
+                LibraryMatch.best(item, c)?.let { if (it.id != e.id && out.none { o -> o.id == it.id }) out += it }
+            }
+            return out
+        }
+        val rows = ArrayList<Pair<String, List<Entry>>>()
+        if (d.collectionId > 0 && tmdbKey.isNotBlank()) {
+            val mine = inLibrary(Tmdb.collection(tmdbKey, d.collectionId))
+            if (mine.isNotEmpty()) { rows += d.collectionName.ifBlank { "Collection" } to mine; detailRows = rows.toList() }
+        }
+        val like = inLibrary(d.similar)
+        if (like.isNotEmpty()) { rows += "More like this" to like; detailRows = rows.toList() }
+    }
     val liveFocusIdx = shownEntries.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
 
     val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null) || pickerOpen || appearanceOpen || searchOpen || multiOpen || showSettings
@@ -1653,6 +1732,11 @@ private fun AppState.AppBody() {
         }
     }
 
+    actor?.let { (name, _) -> ActorDialog(name, actorMovies, onOpen = { onEntry(it) }, onDismiss = { actor = null }) }
+    if (crashShown) {
+        val full = CrashLog.read(ctx).orEmpty()
+        CrashDialog(CrashLog.latest(full) ?: full, CrashLog.file(ctx).absolutePath, onClear = { CrashLog.clear(ctx); crashShown = false; layoutTick++ }, onDismiss = { crashShown = false })
+    }
     programTarget?.let { (ch, p) ->
         val id = "${ch.id}:${p.start}"
         val reminded = id in reminderKeys
@@ -1926,6 +2010,10 @@ private fun AppState.AppBody() {
                     action = {
                         textPrompt = TextPrompt("TMDB API key (free at themoviedb.org)", tmdbKey) { k -> tmdbKey = k.trim(); store.setGString("tmdbKey", tmdbKey); layoutTick++ }
                     }),
+                SettingItem("Ratings (OMDb key)", if (omdbKey.isBlank()) "Not set" else "On", "IMDb, Rotten Tomatoes and Metacritic scores on movie pages. Free key from omdbapi.com.",
+                    action = {
+                        textPrompt = TextPrompt("OMDb API key (free at omdbapi.com)", omdbKey) { k -> omdbKey = k.trim(); store.setGString("omdbKey", omdbKey); layoutTick++ }
+                    }),
                 SettingItem("Extra guide (XMLTV URL)", if (xmltvUrl.isBlank()) "Not set" else if (xmltvBusy) "Updating…" else "On", "Adds a second guide that fills gaps. Needs the address of an XMLTV file.",
                     action = {
                         textPrompt = TextPrompt("XMLTV guide URL", xmltvUrl) { u ->
@@ -2033,6 +2121,10 @@ private fun AppState.AppBody() {
                 SettingItem("Vance TV", BuildConfig.VERSION_NAME, "Version of this app", enabled = false),
                 SettingItem("Check for updates", null, "Install the newest version from GitHub", action = { updateOpen = true; checkUpdates(false) }),
                 SettingItem("Playback diagnostics", null, Diag.summary(), action = { Diag.reset(); layoutTick++ }),
+                SettingItem("Last crash",
+                    CrashLog.read(ctx)?.let { CrashLog.latest(it) }?.lineSequence()?.firstOrNull()?.removePrefix("=== ")?.substringBefore("  \u00B7").orEmpty().ifBlank { "None" },
+                    "Select to read the error. It is also saved as crash.log in the app's files folder.",
+                    action = { if (CrashLog.read(ctx) != null) crashShown = true else toast("No crash recorded") }),
                 SettingItem("This device", android.os.Build.MODEL, "Android ${android.os.Build.VERSION.RELEASE}", enabled = false),
                 SettingItem("Built with", null, "Media3 (playback), OkHttp (network), Coil (images), Jetpack Compose, FFmpeg decoder (jellyfin), Inter typeface. Movie data from TMDB.", enabled = false),
             )),
@@ -2413,6 +2505,24 @@ private fun AppState.AppBody() {
                         onMyList = { toggleMyList(d) },
                         onTrailer = { openTrailer(detail?.trailer) },
                         onEpisode = { playNow(it, true) },
+                        versions = versions,
+                        onVersion = { v -> if (v.kind == Kind.SERIES) openSeries(v) else openMovie(v) },
+                        rows = detailRows,
+                        onOpenEntry = { e -> onEntry(e) },
+                        onActor = { name, id ->
+                            actor = name to id; actorMovies = null
+                            scope.launch {
+                                val items = Tmdb.personMovies(tmdbKey, id)
+                                val out = ArrayList<Entry>()
+                                for (item in items) {
+                                    val c = withContext(Dispatchers.IO) { runCatching { index.search(LibraryMatch.searchQuery(item.title), 60)[Kind.MOVIE].orEmpty() }.getOrDefault(emptyList()) }
+                                    LibraryMatch.best(item, c)?.let { if (out.none { o -> o.id == it.id }) out += it }
+                                }
+                                if (actor?.second == id) actorMovies = out
+                            }
+                        },
+                        watched = d.key() in watched,
+                        onToggleWatched = { toggleWatched(d) },
                     )
                 }
         } else {
@@ -2528,6 +2638,7 @@ private fun AppState.AppBody() {
                                         firstFocus = if ((hero == null || !Dimens.homeHero) && i == 0) Modifier.focusRequester(firstItem) else Modifier,
                                         onFocusEntry = { pendingHome = it },
                                         badgeOf = { if (it.kind == Kind.SERIES && newEps.any { n -> decodeEntry(n)?.id == it.id }) "NEW EPISODES" else null },
+                                        restoreKey = restoreKey, restorePending = restorePending, onRestored = { restorePending = false },
                                     )
                                 }
                                 if (hero == null && shelves.isEmpty()) item {
@@ -2627,7 +2738,9 @@ private fun AppState.AppBody() {
                                     itemsIndexed(shownEntries) { i, e ->
                                         PosterCard(
                                             nameOf(e), e.icon, "", isFav(e), progressOf(e),
-                                            if (i == 0) Modifier.focusRequester(firstItem) else Modifier, width = null,
+                                            (if (i == 0) Modifier.focusRequester(firstItem) else Modifier)
+                                                .then(restoreFocusModifier(e.key(), restoreKey, restorePending, i == 0) { restorePending = false }),
+                                            width = null,
                                             onLongClick = { menuTarget = MenuTarget.EntryT(e) },
                                             badge = if (e.kind == Kind.SERIES && newEps.any { n -> decodeEntry(n)?.id == e.id }) "NEW EPISODES" else null,
                                         ) { onEntry(e) }
