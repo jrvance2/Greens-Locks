@@ -288,6 +288,22 @@ class SportsState(private val store: Store) {
     /** "league:teamId:Team name" */
     var follows by mutableStateOf(store.list("sportsTeams"))
     var enabled by mutableStateOf(store.list("sportsLeagues").ifEmpty { DEFAULT_SPORT_LEAGUES })
+    /** Show games in progress as a row on Home. */
+    var homeRow by mutableStateOf(store.gString("sportsHome") != "0")
+    var homeLive by mutableStateOf<List<Game>>(emptyList())
+    /** A game another screen wants the Sports hub to open straight away. */
+    var pendingOpen by mutableStateOf<Game?>(null)
+
+    fun showHomeRow(on: Boolean) { homeRow = on; store.setGString("sportsHome", if (on) "1" else "0"); if (!on) homeLive = emptyList() }
+
+    /** Live games for the Home row: followed teams first, then the rest by league order. */
+    suspend fun refreshHome() {
+        val live = coroutineScope {
+            leagues().map { l -> async { runCatching { SportsApi.scoreboard(l, null, 45_000).filter { it.isLive } }.getOrDefault(emptyList()) } }
+                .awaitAll().flatten()
+        }
+        homeLive = live.sortedBy { g -> if (isFollowed(g.league, g.home.id) || isFollowed(g.league, g.away.id)) 0 else 1 }.take(24)
+    }
 
     fun leagues() = SPORT_LEAGUES.filter { it.key in enabled }
     fun league(key: String = leagueKey) = SPORT_LEAGUES.firstOrNull { it.key == key }

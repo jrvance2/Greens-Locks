@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.LiveTv
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material3.MaterialTheme
@@ -84,9 +85,12 @@ fun SportsScreen(
     state: SportsState,
     findChannels: suspend (List<String>) -> List<Entry>,
     onWatch: (Entry) -> Unit,
+    onRemind: (Entry, Game) -> Unit = { _, _ -> },
 ) {
     var open by remember { mutableStateOf<Game?>(null) }
     var finder by remember { mutableStateOf<Game?>(null) }
+    var remindMode by remember { mutableStateOf(false) }
+    LaunchedEffect(state.pendingOpen) { state.pendingOpen?.let { open = it; state.pendingOpen = null } }
     val firstLeague = remember { FocusRequester() }
 
     // Load now, then keep scores fresh: quickly while anything is live, slowly otherwise.
@@ -109,8 +113,11 @@ fun SportsScreen(
             }
         }
     }
-    open?.let { g -> GameDialog(g, state, onFind = { finder = g }, onDismiss = { open = null }) }
-    finder?.let { g -> ChannelFinderDialog(g, findChannels, onPick = { e -> finder = null; open = null; onWatch(e) }, onDismiss = { finder = null }) }
+    open?.let { g -> GameDialog(g, state, onFind = { remindMode = false; finder = g }, onRemind = { remindMode = true; finder = g }, onDismiss = { open = null }) }
+    finder?.let { g ->
+        ChannelFinderDialog(g, findChannels, remind = remindMode,
+            onPick = { e -> finder = null; open = null; if (remindMode) onRemind(e, g) else onWatch(e) }, onDismiss = { finder = null })
+    }
 }
 
 @Composable
@@ -253,7 +260,7 @@ private fun TeamRow(t: TeamLine, g: Game, state: SportsState) {
 }
 
 @Composable
-private fun GameDialog(g: Game, state: SportsState, onFind: () -> Unit, onDismiss: () -> Unit) {
+private fun GameDialog(g: Game, state: SportsState, onFind: () -> Unit, onRemind: () -> Unit, onDismiss: () -> Unit) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(120); runCatching { first.requestFocus() } }
     // Use most of the screen height, whatever the TV's resolution and density.
@@ -299,6 +306,9 @@ private fun GameDialog(g: Game, state: SportsState, onFind: () -> Unit, onDismis
                 }
                 Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ActionButton("Find on my channels", Modifier.fillMaxWidth().focusRequester(first), icon = Icons.Rounded.LiveTv, onClick = onFind)
+                    if (g.isUpcoming && g.start > System.currentTimeMillis()) {
+                        ActionButton("Remind me at kickoff", Modifier.fillMaxWidth(), primary = false, icon = Icons.Rounded.Notifications, onClick = onRemind)
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(g.away, g.home).forEach { t ->
                             val f = state.isFollowed(g.league, t.id)
@@ -358,7 +368,7 @@ private fun LineScores(g: Game) {
 }
 
 @Composable
-private fun ChannelFinderDialog(g: Game, find: suspend (List<String>) -> List<Entry>, onPick: (Entry) -> Unit, onDismiss: () -> Unit) {
+private fun ChannelFinderDialog(g: Game, find: suspend (List<String>) -> List<Entry>, remind: Boolean = false, onPick: (Entry) -> Unit, onDismiss: () -> Unit) {
     var hits by remember { mutableStateOf<List<ChannelMatch.Hit>?>(null) }
     val first = remember { FocusRequester() }
     LaunchedEffect(g.id) { hits = runCatching { ChannelMatch.rank(g, find(ChannelMatch.searchTerms(g))) }.getOrDefault(emptyList()) }
@@ -366,7 +376,7 @@ private fun ChannelFinderDialog(g: Game, find: suspend (List<String>) -> List<En
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(20.dp), color = Palette.surface, tonalElevation = 0.dp) {
             Column(Modifier.widthIn(min = 520.dp, max = 720.dp).padding(20.dp)) {
-                Text("Where to watch", style = MaterialTheme.typography.titleLarge)
+                Text(if (remind) "Remind me on which channel?" else "Where to watch", style = MaterialTheme.typography.titleLarge)
                 Text(
                     "${g.away.name} at ${g.home.name}" + if (g.networks.isNotEmpty()) "  ·  on ${g.networks.joinToString(", ")}" else "",
                     color = Palette.muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
@@ -431,6 +441,17 @@ private fun StandingsView(state: SportsState) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** Home row of games in progress; followed teams come first. */
+@Composable
+fun LiveSportsRow(games: List<Game>, state: SportsState, onOpen: (Game) -> Unit) {
+    Text("Live sports", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 24.dp, top = 6.dp, bottom = 6.dp))
+    LazyRow(contentPadding = PaddingValues(horizontal = 24.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        itemsIndexed(games, key = { _, g -> g.league + g.id }) { _, g ->
+            Box(Modifier.width(340.dp)) { GameCard(g, state, showLeague = true) { onOpen(g) } }
         }
     }
 }

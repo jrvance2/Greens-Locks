@@ -1,5 +1,9 @@
 # Vance TV changelog
 
+## Beta (next)
+- Build: Kotlin 2.4.21 with the Compose compiler plugin (was Kotlin 1.9.24). Strong skipping is now on, so screens redraw less; if any list or row fails to update, report it.
+- Sports: "Live sports" row on Home (games in progress, followed teams first; Settings > Sports > Live sports on Home); "Remind me at kickoff" on upcoming games (pick the channel; you're switched over at the start, same as programme reminders).
+
 ## 1.2.54 (stable; same code as beta 53)
 - Fix: in the audio & subtitles panel, Left now moves between the subtitle-size chips instead of closing the panel.
 - Fix: the last channel no longer starts playing by itself when the app opens (it is remembered for the Live list and the "Last channel" start option only).

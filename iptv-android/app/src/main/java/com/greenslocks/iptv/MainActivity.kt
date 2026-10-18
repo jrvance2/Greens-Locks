@@ -2039,6 +2039,7 @@ private fun AppState.AppBody() {
                 SPORT_LEAGUES.forEach { l ->
                     add(toggle(l.name, "Show in the Sports hub", l.key in sports.enabled) { sports.toggleLeague(l.key); layoutTick++ })
                 }
+                add(toggle("Live sports on Home", "Show games in progress as a row on Home (followed teams first)", sports.homeRow) { sports.showHomeRow(!sports.homeRow); layoutTick++ })
                 add(SettingItem("Followed teams", "${sports.follows.size}", "Follow a team from a game or a standings row; they appear under My teams", enabled = false))
                 add(SettingItem("Clear followed teams", null, null, action = { sports.clearFollows(); layoutTick++ }))
             }),
@@ -2612,6 +2613,12 @@ private fun AppState.AppBody() {
                                 }, w)
                             }.filter { it.second.isNotEmpty() }
                             if (Dimens.ambient) AmbientBackground(Modifier.fillMaxSize())
+                            LaunchedEffect(sports.homeRow, sports.enabled) {
+                                while (sports.homeRow) {
+                                    runCatching { sports.refreshHome() }
+                                    delay(if (sports.homeLive.isEmpty()) 180_000L else 60_000L)
+                                }
+                            }
                             LazyColumn(Modifier.fillMaxSize(), state = homeState, contentPadding = PaddingValues(bottom = 40.dp)) {
                                 if (hero != null && Dimens.homeHero) item {
                                     HeroBanner(
@@ -2624,6 +2631,9 @@ private fun AppState.AppBody() {
                                         backdrop = heroBackdrop,
                                         dots = if (focusedHome == null) heroPool.size else 0, dot = heroIdx,
                                     )
+                                }
+                                if (sports.homeRow && sports.homeLive.isNotEmpty() && homeFilter == 0) item {
+                                    LiveSportsRow(sports.homeLive, sports) { g -> sports.select("live"); sports.pendingOpen = g; openTab(Tab.SPORTS) }
                                 }
                                 if (Dimens.homeChips) item {
                                     androidx.compose.foundation.lazy.LazyRow(
@@ -2757,6 +2767,10 @@ private fun AppState.AppBody() {
                             sports,
                             findChannels = { terms -> withContext(Dispatchers.IO) { terms.flatMap { t -> index.search(t, 40)[Kind.LIVE].orEmpty() } } },
                             onWatch = { e -> playNow(e, true) },
+                            onRemind = { ch, g ->
+                                val title = "${g.away.name} at ${g.home.name}"
+                                toggleReminder(ch, Programme(title, g.start, g.start + 3 * 3_600_000L))
+                            },
                         )
 
                         Tab.EXPLORE -> ExploreScreen(

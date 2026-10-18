@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // CI passes -Pvc=<run number> so every published build is newer than the last (needed for in-app updates).
@@ -53,10 +54,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
     testOptions { unitTests.isReturnDefaultValues = true }
     buildFeatures { compose = true; buildConfig = true }
-    composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 }
 
 dependencies {
@@ -85,3 +84,5 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
     implementation("androidx.tvprovider:tvprovider:1.0.0")
 }
+
+kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
