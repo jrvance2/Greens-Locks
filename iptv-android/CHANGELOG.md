@@ -1,6 +1,6 @@
 # Vance TV changelog
 
-## Beta (next)
+## 1.2.54 (stable; same code as beta 53)
 - Fix: in the audio & subtitles panel, Left now moves between the subtitle-size chips instead of closing the panel.
 - Fix: the last channel no longer starts playing by itself when the app opens (it is remembered for the Live list and the "Last channel" start option only).
 - Movie page: other versions of a title in your library (4K / 1080p / HD) you can switch to; format badges (HDR, Dolby Vision, Atmos, 5.1...); technical line from your provider (codec, resolution, audio, bitrate); age rating; IMDb / Rotten Tomatoes / Metacritic scores (needs a free OMDb key in Settings); director; tap an actor to see their movies in your library; More like this and collection rows (only titles you have); Mark watched/unwatched with a Watched tag; "Added N days ago" and NEW.
