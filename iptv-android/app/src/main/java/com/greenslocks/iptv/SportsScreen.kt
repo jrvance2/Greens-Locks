@@ -256,16 +256,19 @@ private fun TeamRow(t: TeamLine, g: Game, state: SportsState) {
 private fun GameDialog(g: Game, state: SportsState, onFind: () -> Unit, onDismiss: () -> Unit) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(120); runCatching { first.requestFocus() } }
+    // Use most of the screen height, whatever the TV's resolution and density.
+    val maxHeight = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.92f).dp
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(22.dp), color = Palette.surface, tonalElevation = 0.dp) {
-            Column(Modifier.widthIn(min = 560.dp, max = 760.dp).heightIn(max = 640.dp).padding(24.dp)) {
+            Column(Modifier.widthIn(min = 560.dp, max = 760.dp).heightIn(max = maxHeight).padding(horizontal = 24.dp, vertical = 18.dp)) {
                 val league = SPORT_LEAGUES.firstOrNull { it.key == g.league }
-                // Scoreboard stays put at the top...
-                Text(
-                    listOfNotNull(league?.name, g.note.takeIf { it.isNotBlank() }).joinToString("  \u00B7  "),
-                    color = Palette.muted, style = MaterialTheme.typography.labelLarge, maxLines = 2,
-                )
-                Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                val info = listOfNotNull(
+                    league?.name, g.note.takeIf { it.isNotBlank() },
+                    g.networks.takeIf { it.isNotEmpty() }?.let { "TV: " + it.joinToString(", ") },
+                    g.venue.takeIf { it.isNotBlank() },
+                ).joinToString("  \u00B7  ")
+                Text(info, color = Palette.muted, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     BigTeam(g.away, g, Modifier.weight(1f))
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(min = 120.dp)) {
                         if (g.isLive) Box(Modifier.size(10.dp).clip(CircleShape).background(Palette.live))
@@ -277,11 +280,11 @@ private fun GameDialog(g: Game, state: SportsState, onFind: () -> Unit, onDismis
                     }
                     BigTeam(g.home, g, Modifier.weight(1f))
                 }
-                // ...details scroll if there are many...
+                // Line scores and top performers scroll if they don't fit; the buttons below always stay visible.
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                     LineScores(g)
                     if (g.leaders.isNotEmpty()) {
-                        Text("Top performers", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                        Text("Top performers", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
                         g.leaders.forEach { l ->
                             Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                                 Text(l.label.uppercase(), Modifier.width(70.dp), color = Palette.muted, style = MaterialTheme.typography.labelMedium)
@@ -293,24 +296,17 @@ private fun GameDialog(g: Game, state: SportsState, onFind: () -> Unit, onDismis
                             }
                         }
                     }
-                    val info = listOfNotNull(
-                        g.networks.takeIf { it.isNotEmpty() }?.let { "TV: " + it.joinToString(", ") },
-                        g.venue.takeIf { it.isNotBlank() },
-                    ).joinToString("   \u00B7   ")
-                    if (info.isNotEmpty()) Text(info, color = Palette.muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 12.dp))
                 }
-                // ...and the buttons stay visible at the bottom.
-                Column(Modifier.padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ActionButton("Find on my channels", Modifier.fillMaxWidth().focusRequester(first), icon = Icons.Rounded.LiveTv, onClick = onFind)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(g.away, g.home).forEach { t ->
                             val f = state.isFollowed(g.league, t.id)
                             ActionButton(
-                                (if (f) "Unfollow " else "Follow ") + t.name, Modifier.weight(1f), primary = false,
+                                (if (f) "Unfollow " else "Follow ") + t.abbr, Modifier.weight(1f), primary = false,
                                 icon = if (f) Icons.Rounded.Star else Icons.Rounded.StarBorder,
                             ) { state.toggleFollow(g.league, t) }
                         }
-                        ActionButton("Close", Modifier.weight(0.6f), primary = false, onClick = onDismiss)
                     }
                 }
             }
@@ -322,14 +318,14 @@ private fun GameDialog(g: Game, state: SportsState, onFind: () -> Unit, onDismis
 private fun BigTeam(t: TeamLine, g: Game, modifier: Modifier) {
     val dim = g.isFinal && !t.winner && g.away.score != g.home.score
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Artwork(t.logo, t.name, Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)), ContentScale.Fit)
+        Artwork(t.logo, t.name, Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)), ContentScale.Fit)
         Text(
-            t.name, Modifier.padding(top = 8.dp), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            t.name, Modifier.padding(top = 6.dp), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.titleMedium, color = if (dim) Palette.muted else Palette.text,
         )
         if (t.record.isNotBlank()) Text(t.record, color = Palette.muted, style = MaterialTheme.typography.bodySmall)
         if (!g.isUpcoming && t.score.isNotBlank()) {
-            Text(t.score, fontSize = 40.sp, fontWeight = FontWeight.ExtraBold, color = if (dim) Palette.muted else Palette.text)
+            Text(t.score, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold, color = if (dim) Palette.muted else Palette.text)
         }
     }
 }
