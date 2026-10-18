@@ -165,6 +165,12 @@ private val PAD_DIGITS = listOf(
     Key.NumPad5, Key.NumPad6, Key.NumPad7, Key.NumPad8, Key.NumPad9,
 )
 
+private tailrec fun Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 private fun redact(msg: String?): String =
     (msg ?: "unknown error").replace(Regex("(?i)(username|password|user|pass)=[^&\\s]*"), "$1=***")
 
@@ -270,6 +276,7 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     var groups by mutableStateOf(store.map("groups"))
     var reminders by mutableStateOf(store.list("reminders"))
     var newEps by mutableStateOf(store.list("newEps"))
+    var playing by mutableStateOf(false)
     val knownStamps = mutableMapOf<String, Long>()
     var dueReminder by mutableStateOf<Reminder?>(null)
     var remindersOpen by mutableStateOf(false)
@@ -481,6 +488,8 @@ private fun AppState.AppBody() {
 
             override fun onRenderedFirstFrame() { Diag.firstFrame() }
 
+            override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
+
             override fun onPlaybackStateChanged(state: Int) {
                 // Stuck buffering for a long time on live TV: quietly reconnect instead of waiting forever.
                 stall?.cancel()
@@ -514,6 +523,20 @@ private fun AppState.AppBody() {
     }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
     LaunchedEffect(Unit) { runCatching { BackgroundRefresh.apply(ctx, store.flag("bgRefresh", true)) } }
+    // Tell the TV something is playing, so its idle timer (screensaver / sleep after ~15 minutes) doesn't kick in.
+    // A paused full-screen video holds the screen for 30 minutes, then lets the TV sleep normally.
+    fun keepAwake(on: Boolean) {
+        val w = ctx.findActivity()?.window ?: return
+        if (on) w.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+    LaunchedEffect(current, fullscreen, playing) {
+        if (current == null) { keepAwake(false); return@LaunchedEffect }
+        if (playing) { keepAwake(true); return@LaunchedEffect }
+        if (fullscreen) { keepAwake(true); delay(30 * 60_000L) }
+        keepAwake(false)
+    }
+    DisposableEffect(Unit) { onDispose { keepAwake(false) } }
 
     SideEffect { PipState.ready = fullscreen && current != null }
     LaunchedEffect(now, reminders) {

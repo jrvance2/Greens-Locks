@@ -1,6 +1,7 @@
 # Vance TV changelog
 
 ## Beta (next)
+- Fix: the TV no longer goes to sleep / stops playback after ~15 minutes with no remote input; the app now keeps the screen awake while something plays (a paused full-screen video holds it for 30 minutes).
 - Home: real library-wide "Recently added movies" and "Recently added series" rows (replaces the old first-categories guess).
 - "New episodes" row and badge for series you follow that gained episodes since you last opened them.
 
