@@ -292,6 +292,7 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     var reminders by mutableStateOf(store.list("reminders"))
     var newEps by mutableStateOf(store.list("newEps"))
     var playing by mutableStateOf(false)
+    var lastLive by mutableStateOf<Entry?>(null)
     var versions by mutableStateOf<List<Entry>>(emptyList())
     var detailRows by mutableStateOf<List<Pair<String, List<Entry>>>>(emptyList())
     var watched by mutableStateOf(store.list("watched").toSet())
@@ -1026,9 +1027,9 @@ private fun AppState.AppBody() {
             listVersion++
             loadHome(p)
             rebuildIndex(p, false)
-            if (current == null) {
-                current = store.string("last")?.let(::decodeEntry)?.takeIf { it.kind == Kind.LIVE }
-            }
+            // Remember the last channel for the Live list and the "Last channel" start option, but don't play it:
+            // anything that sets "current" starts playback.
+            lastLive = store.string("last")?.let(::decodeEntry)?.takeIf { it.kind == Kind.LIVE }
             startTick++
             if (store.string("picked") == null) {
                 val total = runCatching {
@@ -1552,7 +1553,7 @@ private fun AppState.AppBody() {
         if (startTick == 0) return@LaunchedEffect
         when (startIdx) {
             1 -> openTab(Tab.LIVE)
-            2 -> { openTab(Tab.LIVE); current?.takeIf { it.kind == Kind.LIVE }?.let { playNow(it, true) } }
+            2 -> { openTab(Tab.LIVE); (current ?: lastLive)?.takeIf { it.kind == Kind.LIVE }?.let { playNow(it, true) } }
         }
     }
     LaunchedEffect(panelOpen, panelMode, panelChannels) {
@@ -1616,7 +1617,7 @@ private fun AppState.AppBody() {
         val like = inLibrary(d.similar)
         if (like.isNotEmpty()) { rows += "More like this" to like; detailRows = rows.toList() }
     }
-    val liveFocusIdx = shownEntries.indexOfFirst { it.key() == current?.key() }.coerceAtLeast(0)
+    val liveFocusIdx = shownEntries.indexOfFirst { it.key() == (current ?: lastLive)?.key() }.coerceAtLeast(0)
 
     val overlayActive = detailEntry != null || guideOpen || (fullscreen && current != null) || pickerOpen || appearanceOpen || searchOpen || multiOpen || showSettings
     BackHandler(enabled = showSetup && provider != null) { showSetup = false }
