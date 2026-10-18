@@ -1,6 +1,7 @@
 # Vance TV changelog
 
 ## Beta (next)
+- Sports hub (new tab): live scores, schedules and standings for NFL, NBA, MLB, NHL, college football/basketball, WNBA, MLS, Premier League, La Liga, Bundesliga, Serie A, Champions League and UFC; Live now across leagues; follow teams (My teams); game detail with line scores and top performers; "Find on my channels" matches a game to your channels by team names and TV network. Data: ESPN public scoreboard feed.
 - New setting "When you leave the app" (Playback & audio): stop playback (new default), small window (PiP), or keep playing.
 - Fix: the TV no longer goes to sleep / stops playback after ~15 minutes with no remote input; the app now keeps the screen awake while something plays (a paused full-screen video holds it for 30 minutes).
 - Home: real library-wide "Recently added movies" and "Recently added series" rows (replaces the old first-categories guess).

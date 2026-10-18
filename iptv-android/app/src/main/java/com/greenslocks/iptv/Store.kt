@@ -141,7 +141,7 @@ class Store(private val prefs: SharedPreferences) {
     fun setInt(name: String, v: Int) { prefs.edit().putInt(name, v).apply() }
 
     // ---- backup / restore (favorites, hidden/pinned categories, names, layout and settings; never logins or PIN)
-    private val backupLists = listOf("fav2", "hist", "hidCats", "hidEntries", "lockCats", "pinCats", "mylist", "reminders", "kidsCats", "seriesRules")
+    private val backupLists = listOf("fav2", "hist", "hidCats", "hidEntries", "lockCats", "pinCats", "mylist", "reminders", "kidsCats", "seriesRules", "sportsTeams", "sportsLeagues")
     private val backupMaps = listOf("renames", "catOrder", "groups", "chShift")
     private val backupInts = listOf("accent", "bg", "cards", "text", "anim", "ui", "audioMode", "uaMode", "corner", "rowSize", "guideRow", "overlay", "audioLang", "subLang", "recPadStart", "recPadEnd", "start", "buffer", "resize", "subSize", "sortMode")
     private val backupFlags = listOf("xmltvFirst", "clock", "topNav", "homeHero", "homeChips", "glow", "heroTint", "pcmAudio", "sounds", "railLabels", "zapStrip", "mergeDupes", "sortAz", "showHidden", "lockAdult", "autoNext", "matchFps", "liveTs")

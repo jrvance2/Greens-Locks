@@ -126,7 +126,7 @@ private val pendingLaunch = mutableStateOf<String?>(null)
 private object PipState { @Volatile var ready = false }
 
 private enum class Tab {
-    HOME, LIVE, MOVIES, SERIES, FAVORITES;
+    HOME, LIVE, MOVIES, SERIES, SPORTS, FAVORITES;
 
     fun kind(): Kind? = when (this) {
         LIVE -> Kind.LIVE
@@ -219,6 +219,7 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     val store = Store(prefs)
     val isTv: Boolean =
         (ctx.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+    val sports = SportsState(store)
 
     var profiles by mutableStateOf(store.profiles())
     var activeProfile by mutableIntStateOf(store.active)
@@ -1942,6 +1943,13 @@ private fun AppState.AppBody() {
                 SettingItem("Reminders", "${reminders.size}", "Programmes you asked to be reminded about", action = { remindersOpen = true }),
                 SettingItem("Multiview", "${multiList.size}/4", "Watch up to four channels at once", closes = true, action = { loadAccount(); player.pause(); multiOpen = true }),
             )),
+            SettingSection("Sports", "Scores, schedules and standings (public data from ESPN).", buildList {
+                SPORT_LEAGUES.forEach { l ->
+                    add(toggle(l.name, "Show in the Sports hub", l.key in sports.enabled) { sports.toggleLeague(l.key); layoutTick++ })
+                }
+                add(SettingItem("Followed teams", "${sports.follows.size}", "Follow a team from a game or a standings row; they appear under My teams", enabled = false))
+                add(SettingItem("Clear followed teams", null, null, action = { sports.clearFollows(); layoutTick++ }))
+            }),
             SettingSection("Profiles & parental", "Profiles, Kids mode and PIN.", buildList {
                 add(toggle("Ask who's watching", "Show a profile picker when the app opens (when there is more than one profile)", Dimens.askProfile) { setLayoutFlag("askProfile", !Dimens.askProfile) })
                 profiles.forEach { pr ->
@@ -2412,6 +2420,7 @@ private fun AppState.AppBody() {
                 RailItem(RailIconType.LIVE, "Live TV", tab == Tab.LIVE),
                 RailItem(RailIconType.MOVIES, "Movies", tab == Tab.MOVIES),
                 RailItem(RailIconType.SERIES, "Series", tab == Tab.SERIES),
+                RailItem(RailIconType.SPORTS, "Sports", tab == Tab.SPORTS),
                 RailItem(RailIconType.FAVORITES, "Favorites", tab == Tab.FAVORITES),
                 RailItem(RailIconType.GUIDE, "Guide", false),
                 RailItem(RailIconType.SETTINGS, "Settings", false),
@@ -2423,6 +2432,7 @@ private fun AppState.AppBody() {
                     RailIconType.LIVE -> openTab(Tab.LIVE)
                     RailIconType.MOVIES -> openTab(Tab.MOVIES)
                     RailIconType.SERIES -> openTab(Tab.SERIES)
+                    RailIconType.SPORTS -> openTab(Tab.SPORTS)
                     RailIconType.FAVORITES -> openTab(Tab.FAVORITES)
                     RailIconType.GUIDE ->
                         if (guideChannels.isNotEmpty()) guideOpen = true else { openTab(Tab.LIVE); wantGuide = true }
@@ -2621,6 +2631,12 @@ private fun AppState.AppBody() {
                                 }
                             }
                         }
+
+                        Tab.SPORTS -> SportsScreen(
+                            sports,
+                            findChannels = { terms -> withContext(Dispatchers.IO) { terms.flatMap { t -> index.search(t, 40)[Kind.LIVE].orEmpty() } } },
+                            onWatch = { e -> playNow(e, true) },
+                        )
 
                         Tab.FAVORITES -> Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -67,6 +67,7 @@ private fun sectionIcon(title: String): ImageVector = when {
     title.startsWith("Layout") -> Icons.Rounded.Dashboard
     title.startsWith("Playback") -> Icons.Rounded.PlayCircle
     title.startsWith("Guide") -> Icons.Rounded.Schedule
+    title.startsWith("Sports") -> Icons.Rounded.SportsScore
     title.startsWith("Profiles") -> Icons.Rounded.Person
     title.startsWith("Data") -> Icons.Rounded.CloudSync
     title.startsWith("About") -> Icons.Rounded.Info
