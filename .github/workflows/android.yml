@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
-        with: { gradle-version: 8.9 }
+        with: { gradle-version: 8.14.3 }
       - name: Pick the channel
         run: |
           # A commit message containing [beta] builds the beta channel (installs beside the stable app, own update feed).
