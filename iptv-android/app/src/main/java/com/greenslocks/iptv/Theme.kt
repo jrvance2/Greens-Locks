@@ -71,6 +71,8 @@ object Dimens {
     var keepFrame by mutableStateOf(true)
     var ambient by mutableStateOf(true)
     var askProfile by mutableStateOf(true)
+    /** What happens to playback when you leave the app: 0 stop, 1 small window (PiP), 2 keep playing. */
+    var exitMode by mutableIntStateOf(0)
     /** 0 = full animations, 1 = reduced, 2 = off. */
     var animLevel by mutableIntStateOf(0)
 

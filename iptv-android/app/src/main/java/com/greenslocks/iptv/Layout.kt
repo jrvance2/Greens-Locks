@@ -10,6 +10,7 @@ val NAV_NAMES = listOf("Side rail", "Top bar")
 val SUB_BG_NAMES = listOf("None", "Soft", "Solid")
 val SUB_EDGE_NAMES = listOf("None", "Outline", "Shadow")
 val SUB_COLOR_NAMES = listOf("White", "Yellow", "Cyan")
+val EXIT_NAMES = listOf("Stop playback", "Small window (PiP)", "Keep playing")
 val SKIP_SECS = listOf(5, 10, 15, 30, 60)
 
 /** Reads the saved layout choices into [Dimens] so every screen follows them immediately. */
@@ -35,5 +36,6 @@ object LayoutPrefs {
         Dimens.keepFrame = store.flag("keepFrame", true)
         Dimens.ambient = store.flag("ambient", true)
         Dimens.askProfile = store.flag("askProfile", true)
+        Dimens.exitMode = store.int("exitMode", 0).coerceIn(0, 2)
     }
 }

@@ -537,8 +537,24 @@ private fun AppState.AppBody() {
         keepAwake(false)
     }
     DisposableEffect(Unit) { onDispose { keepAwake(false) } }
+    // Leaving the app (Home button, TV turning off, the small window being closed) stops playback unless you chose otherwise.
+    DisposableEffect(player) {
+        val act = ctx.findActivity()
+        val owner = act as? androidx.lifecycle.LifecycleOwner
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            if (ev == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                val inPip = Build.VERSION.SDK_INT >= 24 && act?.isInPictureInPictureMode == true
+                if (Dimens.exitMode == 0 || (Dimens.exitMode == 1 && !inPip)) {
+                    if (player.playbackState != Player.STATE_IDLE) player.stop()
+                    fullscreen = false
+                }
+            }
+        }
+        owner?.lifecycle?.addObserver(obs)
+        onDispose { owner?.lifecycle?.removeObserver(obs) }
+    }
 
-    SideEffect { PipState.ready = fullscreen && current != null }
+    SideEffect { PipState.ready = fullscreen && current != null && Dimens.exitMode == 1 }
     LaunchedEffect(now, reminders) {
         if (dueReminder != null) return@LaunchedEffect
         val all = reminders.mapNotNull(::decodeReminder)
@@ -1879,6 +1895,8 @@ private fun AppState.AppBody() {
                 SettingItem("Default picture mode", RESIZES[resizeIdx.coerceIn(0, RESIZES.lastIndex)].second, "Each channel also remembers its own setting",
                     choices = RESIZES.map { it.second }, selected = resizeIdx.coerceIn(0, RESIZES.lastIndex),
                     onPick = { i -> resizeIdx = i; store.setInt("resize", i); layoutTick++ }),
+                SettingItem("When you leave the app", EXIT_NAMES[Dimens.exitMode], "What happens to the video when you press Home or the TV turns off",
+                    choices = EXIT_NAMES, selected = Dimens.exitMode, onPick = { i -> setLayout("exitMode", i) }),
                 SettingItem("Subtitle size", SUB_NAMES[subSize], null,
                     choices = SUB_NAMES, selected = subSize, onPick = { i -> subSize = i; store.setInt("subSize", i); layoutTick++ }),
                 SettingItem("Subtitle background", SUB_BG_NAMES[Dimens.subBg], null,
