@@ -175,7 +175,17 @@ private fun SettingRow(item: SettingItem, onClick: () -> Unit) {
                     Text(item.desc, color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 2.dp))
                 }
             }
-            if (item.value != null) {
+            val isSwitch = item.choices == null && item.swatch == null && (item.value == "On" || item.value == "Off")
+            if (isSwitch) {
+                androidx.tv.material3.Switch(
+                    checked = item.value == "On", onCheckedChange = null, modifier = Modifier.padding(start = 16.dp),
+                    colors = androidx.tv.material3.SwitchDefaults.colors(
+                        checkedThumbColor = Palette.text, checkedTrackColor = Palette.accent,
+                        uncheckedThumbColor = Palette.muted, uncheckedTrackColor = Palette.surfaceHi,
+                        uncheckedBorderColor = Palette.muted.copy(alpha = 0.5f),
+                    ),
+                )
+            } else if (item.value != null) {
                 Row(
                     Modifier.padding(start = 16.dp).clip(RoundedCornerShape(50)).background(Palette.surfaceHi)
                         .padding(horizontal = 14.dp, vertical = 6.dp),

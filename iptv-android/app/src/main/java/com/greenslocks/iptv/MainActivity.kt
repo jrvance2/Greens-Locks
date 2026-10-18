@@ -2569,11 +2569,8 @@ private fun AppState.AppBody() {
                     RailIconType.SETTINGS -> openSettings()
                 }
             }
-            val railWidth = if (!Dimens.railLabels) 64.dp else if (isTv) 84.dp else 66.dp
-            Box(Modifier.fillMaxSize()) {
-                if (Dimens.topNav) TopNav(navItems, Modifier.align(Alignment.TopStart), onNav)
-                else IconRail(navItems, Modifier.align(Alignment.TopStart).width(railWidth), onNav)
-                Box(Modifier.fillMaxSize().padding(start = if (Dimens.topNav) 0.dp else railWidth, top = if (Dimens.topNav) 60.dp else 0.dp)) {
+            NavShell(navItems, Dimens.topNav, onNav) { pageModifier ->
+                Box(pageModifier) {
                     when (tab) {
                         Tab.HOME -> {
                             val cont = recentEntries.filter { visible(it) }.take(20)
