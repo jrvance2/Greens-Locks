@@ -126,7 +126,7 @@ private val pendingLaunch = mutableStateOf<String?>(null)
 private object PipState { @Volatile var ready = false }
 
 private enum class Tab {
-    HOME, LIVE, MOVIES, SERIES, SPORTS, FAVORITES;
+    HOME, LIVE, MOVIES, SERIES, SPORTS, EXPLORE, FAVORITES;
 
     fun kind(): Kind? = when (this) {
         LIVE -> Kind.LIVE
@@ -220,6 +220,7 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     val isTv: Boolean =
         (ctx.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
     val sports = SportsState(store)
+    val explore = ExploreState(store)
 
     var profiles by mutableStateOf(store.profiles())
     var activeProfile by mutableIntStateOf(store.active)
@@ -895,6 +896,7 @@ private fun AppState.AppBody() {
         category = null; series = null; entries = emptyList(); episodes = emptyList()
         detailEntry = null; detail = null; allLive = null; query = ""; homeShelves = emptyList()
         counts = emptyMap(); countsLoading.clear(); catFilter = ""; catRegion = "*all"
+        explore.reset()
     }
 
     /** A few poster shelves for the home screen: first categories of movies and series. */
@@ -2421,6 +2423,7 @@ private fun AppState.AppBody() {
                 RailItem(RailIconType.MOVIES, "Movies", tab == Tab.MOVIES),
                 RailItem(RailIconType.SERIES, "Series", tab == Tab.SERIES),
                 RailItem(RailIconType.SPORTS, "Sports", tab == Tab.SPORTS),
+                RailItem(RailIconType.EXPLORE, "Explore", tab == Tab.EXPLORE),
                 RailItem(RailIconType.FAVORITES, "Favorites", tab == Tab.FAVORITES),
                 RailItem(RailIconType.GUIDE, "Guide", false),
                 RailItem(RailIconType.SETTINGS, "Settings", false),
@@ -2433,6 +2436,7 @@ private fun AppState.AppBody() {
                     RailIconType.MOVIES -> openTab(Tab.MOVIES)
                     RailIconType.SERIES -> openTab(Tab.SERIES)
                     RailIconType.SPORTS -> openTab(Tab.SPORTS)
+                    RailIconType.EXPLORE -> openTab(Tab.EXPLORE)
                     RailIconType.FAVORITES -> openTab(Tab.FAVORITES)
                     RailIconType.GUIDE ->
                         if (guideChannels.isNotEmpty()) guideOpen = true else { openTab(Tab.LIVE); wantGuide = true }
@@ -2636,6 +2640,25 @@ private fun AppState.AppBody() {
                             sports,
                             findChannels = { terms -> withContext(Dispatchers.IO) { terms.flatMap { t -> index.search(t, 40)[Kind.LIVE].orEmpty() } } },
                             onWatch = { e -> playNow(e, true) },
+                        )
+
+                        Tab.EXPLORE -> ExploreScreen(
+                            explore, sports, tmdbKey, xmltv, xmltvTick,
+                            reminders = reminders.mapNotNull(::decodeReminder),
+                            recJobs = { Recorder.jobs(ctx) },
+                            ruleCount = seriesRules.size,
+                            libraryReady = indexStatus == null && store.string("indexedAt") != null,
+                            liveChannels = { allLive ?: withContext(Dispatchers.IO) { provider?.allLive().orEmpty() }.also { allLive = it } },
+                            findLibrary = { q, tv -> withContext(Dispatchers.IO) { index.search(q, 60)[if (tv) Kind.SERIES else Kind.MOVIE].orEmpty() } },
+                            onOpenEntry = { e -> onEntry(e) },
+                            onWatch = { e -> playNow(e, true) },
+                            onProgram = { ch, p -> programTarget = ch to p },
+                            onRemoveReminder = { r -> toggleReminder(r.channel, Programme(r.title, r.start, r.start)) },
+                            onCancelRecording = { id -> Recorder.cancel(ctx, id); toast("Recording cancelled") },
+                            onOpenRules = { seriesOpen = true },
+                            onOpenSports = { key, off -> sports.select(key); sports.dayOffset = off; openTab(Tab.SPORTS) },
+                            onSearch = { q -> searchQuery = q; searchResults = emptyMap(); searchOpen = true },
+                            onOpenSettings = { openSettings() },
                         )
 
                         Tab.FAVORITES -> Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {

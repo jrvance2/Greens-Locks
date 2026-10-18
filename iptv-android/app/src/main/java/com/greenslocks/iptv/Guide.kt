@@ -231,11 +231,20 @@ private val newsRx = Regex("(?i)\\b(news|report|weather|headlines?|today|tonight
 private val kidsRx = Regex("(?i)\\b(kids?|cartoon|junior|disney|paw patrol|sesame|bluey|nick|toon|animated)\\b")
 private val movieRx = Regex("(?i)\\b(movie|film|cinema|premiere|thriller|western|romance)\\b")
 
-/** A rough genre guess from the title, shown as a thin colored bar on guide cells. */
-fun genreColor(title: String): androidx.compose.ui.graphics.Color = when {
-    sportsRx.containsMatchIn(title) -> androidx.compose.ui.graphics.Color(0xFF4ADE80)
-    newsRx.containsMatchIn(title) -> androidx.compose.ui.graphics.Color(0xFF60A5FA)
-    kidsRx.containsMatchIn(title) -> androidx.compose.ui.graphics.Color(0xFFFABE3C)
-    movieRx.containsMatchIn(title) -> androidx.compose.ui.graphics.Color(0xFFF472B6)
+/** A rough genre guess from the title: "sports", "news", "kids", "movies" or "". */
+fun genreOf(title: String): String = when {
+    sportsRx.containsMatchIn(title) -> "sports"
+    newsRx.containsMatchIn(title) -> "news"
+    kidsRx.containsMatchIn(title) -> "kids"
+    movieRx.containsMatchIn(title) -> "movies"
+    else -> ""
+}
+
+/** The genre guess as a thin colored bar on guide cells. */
+fun genreColor(title: String): androidx.compose.ui.graphics.Color = when (genreOf(title)) {
+    "sports" -> androidx.compose.ui.graphics.Color(0xFF4ADE80)
+    "news" -> androidx.compose.ui.graphics.Color(0xFF60A5FA)
+    "kids" -> androidx.compose.ui.graphics.Color(0xFFFABE3C)
+    "movies" -> androidx.compose.ui.graphics.Color(0xFFF472B6)
     else -> androidx.compose.ui.graphics.Color.Transparent
 }

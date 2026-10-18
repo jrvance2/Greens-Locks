@@ -1,6 +1,7 @@
 # Vance TV changelog
 
 ## Beta (next)
+- Explore (new tab): Discover (TMDB trending/in theaters/coming soon/top rated/popular series, each matched to your library with an IN LIBRARY badge), Tonight (what's on now / later / prime time across your channels from the extra guide, with genre filters), My agenda (reminders, scheduled recordings and followed teams' games in time order).
 - Fix: buttons now fill their full width (no dark patch showing through the glow); Sports game card focus drawing; game detail keeps the scoreboard and buttons on screen.
 - Sports hub (new tab): live scores, schedules and standings for NFL, NBA, MLB, NHL, college football/basketball, WNBA, MLS, Premier League, La Liga, Bundesliga, Serie A, Champions League and UFC; Live now across leagues; follow teams (My teams); game detail with line scores and top performers; "Find on my channels" matches a game to your channels by team names and TV network. Data: ESPN public scoreboard feed.
 - New setting "When you leave the app" (Playback & audio): stop playback (new default), small window (PiP), or keep playing.

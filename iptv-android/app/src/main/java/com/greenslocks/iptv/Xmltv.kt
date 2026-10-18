@@ -148,6 +148,30 @@ class XmltvStore(ctx: Context, profile: Int) : SQLiteOpenHelper(ctx, "xmltv_$pro
         }
     }
 
+    suspend fun hasData(): Boolean = withContext(Dispatchers.IO) {
+        readableDatabase.rawQuery("SELECT 1 FROM prog LIMIT 1", null).use { it.moveToFirst() }
+    }
+
+    /** Every programme on air at [at], across all channels in the guide. */
+    suspend fun airingAt(at: Long): List<AirRow> = withContext(Dispatchers.IO) {
+        readableDatabase.rawQuery(
+            "SELECT ch, title, start, stop FROM prog WHERE start <= ? AND stop > ?", arrayOf(at.toString(), at.toString()),
+        ).use { c ->
+            val out = ArrayList<AirRow>()
+            while (c.moveToNext()) out += AirRow(c.getString(0), c.getString(1), c.getLong(2), c.getLong(3))
+            out
+        }
+    }
+
+    /** Guide channel id -> the normalized names it is known by. */
+    suspend fun channelNames(): Map<String, List<String>> = withContext(Dispatchers.IO) {
+        val out = HashMap<String, MutableList<String>>()
+        readableDatabase.rawQuery("SELECT id, norm FROM chan", null).use { c ->
+            while (c.moveToNext()) out.getOrPut(c.getString(0)) { ArrayList() } += c.getString(1)
+        }
+        out
+    }
+
     /** Programmes for [entry] in the window, found by its guide id or, failing that, by channel name. */
     suspend fun programmesFor(entry: Entry, from: Long, to: Long): List<Programme> = withContext(Dispatchers.IO) {
         val db = readableDatabase
