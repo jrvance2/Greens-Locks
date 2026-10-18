@@ -284,6 +284,7 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     var panelChannels by mutableStateOf(emptyList<Entry>())
     var autoNext by mutableStateOf(store.flag("autoNext", true))
     var matchFps by mutableStateOf(store.flag("matchFps", true))
+    var modeSwitch by mutableStateOf(store.flag("modeSwitch", false))
     var subSize by mutableIntStateOf(store.int("subSize", 1))
     var liveTs by mutableStateOf(store.flag("liveTs", false))
     var sortMode by mutableIntStateOf(store.int("sortMode", 0))
@@ -450,7 +451,7 @@ private fun AppState.AppBody() {
         }
             // 4K streams run at 25-50 Mbit/s: cap the buffer by memory so small-RAM boxes don't run out of heap.
             .setTargetBufferBytes(
-                (((ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).largeMemoryClass * 0.28f).toInt().coerceIn(48, 160)) * 1024 * 1024
+                (((ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).largeMemoryClass * 0.4f).toInt().coerceIn(96, 160)) * 1024 * 1024
             )
             .build()
         // OkHttp for the network (connection reuse, redirects, IPv4 first); file:// recordings still work.
@@ -476,8 +477,6 @@ private fun AppState.AppBody() {
             init {
                 // If a device can't decode a format or profile (some Dolby Vision, odd HEVC), try another decoder.
                 setEnableDecoderFallback(true)
-                // Queue input to the hardware decoder from a separate thread: fewer dropped frames on 4K before Android 12.
-                forceEnableMediaCodecAsynchronousQueueing()
                 if (effectiveAudio == 3) setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
             }
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink? =
@@ -495,7 +494,7 @@ private fun AppState.AppBody() {
             .build()
     }
     val currentNow by rememberUpdatedState(current)
-    val matchFpsNow by rememberUpdatedState(matchFps)
+    val modeSwitchNow by rememberUpdatedState(modeSwitch)
     val fullscreenNow by rememberUpdatedState(fullscreen)
     fun variantsFor(e: Entry) = variantsOf(e, entries + allLive.orEmpty(), store.string("pref_${normName(e.title)}"))
     val nextVariant = remember(current, entries, allLive, triedTick) {
@@ -552,7 +551,7 @@ private fun AppState.AppBody() {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 tracksTick++
                 val fps = player.videoFormat?.frameRate ?: 0f
-                if (matchFpsNow && fullscreenNow && fps > 0f) ctx.findActivity()?.let { DisplayTools.match(it, fps) }
+                if (modeSwitchNow && fullscreenNow && fps > 0f) ctx.findActivity()?.let { DisplayTools.match(it, fps) }
             }
 
             override fun onTracksChanged(tracks: Tracks) { tracksTick++ }
@@ -1234,7 +1233,7 @@ private fun AppState.AppBody() {
         textIdx = store.int("text", 1); uiIdx = store.int("ui", 1); animIdx = store.int("anim", 0); startIdx = store.int("start", 1)
         sortAz = store.flag("sortAz", false); showHidden = store.flag("showHidden", false)
         lockAdult = store.flag("lockAdult", true); autoNext = store.flag("autoNext", true)
-        matchFps = store.flag("matchFps", true); liveTs = store.flag("liveTs", false)
+        matchFps = store.flag("matchFps", true); modeSwitch = store.flag("modeSwitch", false); liveTs = store.flag("liveTs", false)
         bufferMode = store.int("buffer", 1); resizeIdx = store.int("resize", 0).coerceIn(0, RESIZES.lastIndex)
         subSize = store.int("subSize", 1); sortMode = store.int("sortMode", 0)
         LayoutPrefs.load(store); zapStrip = store.flag("zapStrip", false); mergeDupes = store.flag("mergeDupes", true)
@@ -1504,7 +1503,7 @@ private fun AppState.AppBody() {
     }
     LaunchedEffect(Unit) { Tmdb.backdropSize = if (DisplayTools.physicalWidth(ctx.findActivity()) >= 3000) "original" else "w1280" }
     // Older Android (Fire TV): put the TV back on its normal refresh rate once the video is closed.
-    LaunchedEffect(fullscreen, matchFps) { if (!fullscreen || !matchFps) ctx.findActivity()?.let { DisplayTools.clear(it) } }
+    LaunchedEffect(fullscreen, modeSwitch) { if (!fullscreen || !modeSwitch) ctx.findActivity()?.let { DisplayTools.clear(it) } }
     LaunchedEffect(player, matchFps) {
         player.setVideoChangeFrameRateStrategy(
             if (matchFps) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
@@ -1758,7 +1757,8 @@ private fun AppState.AppBody() {
                     choices = audioNames, selected = audioOrder.indexOf(audioMode).coerceAtLeast(0), onPick = { i -> audioMode = audioOrder[i]; store.setInt("audioMode", audioMode); layoutTick++ }),
                 SettingItem("Buffer", BUFFERS[bufferMode], "Higher means fewer stalls but a slower start",
                     choices = BUFFERS, selected = bufferMode, onPick = { i -> bufferMode = i; store.setInt("buffer", i); layoutTick++ }),
-                toggle("Match frame rate", "Switch the TV to the video's frame rate (24 Hz for films). On Fire TV and other Android 6-10 boxes the screen may blank for a second.", matchFps) { matchFps = !matchFps; store.setFlag("matchFps", matchFps) },
+                toggle("Match frame rate", "Switch the TV to the video's frame rate when the player can do it without a blank screen (Android 11 and newer)", matchFps) { matchFps = !matchFps; store.setFlag("matchFps", matchFps) },
+                toggle("Match refresh rate (Fire TV)", "Android 6-10 boxes: switch the TV to the video's refresh rate (24 Hz for films). The screen blanks for a second and changing channels can hitch, so leave it off unless films judder.", modeSwitch) { modeSwitch = !modeSwitch; store.setFlag("modeSwitch", modeSwitch) },
                 toggle("Auto-play next episode", "Start the next episode when one ends", autoNext) { autoNext = !autoNext; store.setFlag("autoNext", autoNext) },
                 SettingItem("Preferred audio language", LANG_NAMES[audioLang.coerceIn(0, LANG_NAMES.lastIndex)], "Picked automatically when a stream offers it",
                     choices = LANG_NAMES, selected = audioLang, onPick = { i -> audioLang = i; store.setInt("audioLang", i); layoutTick++ }),
