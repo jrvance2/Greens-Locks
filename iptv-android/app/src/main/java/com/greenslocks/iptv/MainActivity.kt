@@ -411,6 +411,10 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     val panelFocus = FocusRequester()
 }
 
+/** Wraps a block in its own composable lambda, so its bytecode lands in a separate method (the JVM caps a method at 64KB). */
+@Composable
+private fun Chunk(content: @Composable () -> Unit) = content()
+
 @Composable
 private fun AppState.AppBody() {
 
@@ -1650,246 +1654,7 @@ private fun AppState.AppBody() {
     BackHandler(enabled = appearanceOpen) { appearanceOpen = false; listVersion++ }
 
     // ---- dialogs UI
-    pinRequest?.let { req ->
-        key(req, pinWrongCount) {
-            PinPadDialog(
-                req.title, pinError,
-                onDone = { pin ->
-                    when (req.onPin(pin)) {
-                        PinResult.CLOSE -> { pinRequest = null; pinError = null }
-                        PinResult.KEEP -> pinError = null
-                        PinResult.WRONG -> { pinError = "Wrong PIN"; pinWrongCount++ }
-                    }
-                },
-                onCancel = { pinRequest = null; pinError = null },
-            )
-        }
-    }
-    textPrompt?.let { TextPromptDialog(it) { textPrompt = null } }
-
-    menuTarget?.takeIf { !kidsMode }?.let { target ->
-        when (target) {
-            is MenuTarget.EntryT -> {
-                val e = target.entry
-                val k = e.key()
-                ActionMenuDialog(nameOf(e), buildList {
-                    add(MenuItem(if (k in favKeys) "Remove from favorites" else "Add to favorites") { toggleFavorite(e) })
-                    if (e.kind == Kind.MOVIE || e.kind == Kind.SERIES) {
-                        add(MenuItem(if (k in myKeys) "Remove from My list" else "Add to My list") { toggleMyList(e) })
-                    }
-                    if (e.kind == Kind.LIVE) add(MenuItem("Add to multiview (${multiList.size}/4)") { addToMulti(e) })
-                    if (e.kind == Kind.LIVE) add(MenuItem("Add to group…", close = false) { menuTarget = MenuTarget.AddToGroupT(e) })
-                    if (e.kind == Kind.LIVE && category?.id?.startsWith("g:") == true) {
-                        add(MenuItem("Remove from this group") { removeFromGroup(category!!.id.removePrefix("g:"), e) })
-                    }
-                    add(MenuItem("Rename…") { textPrompt = TextPrompt("Rename", nameOf(e)) { rename(k, it) } })
-                    if (k in renames) add(MenuItem("Reset name") { rename(k, "") })
-                    add(MenuItem(if (k in hiddenEntries) "Unhide" else "Hide") { toggleHiddenEntry(k) })
-                    if (tab == Tab.FAVORITES) {
-                        add(MenuItem("Move earlier", close = false) { moveFavorite(e, -1) })
-                        add(MenuItem("Move later", close = false) { moveFavorite(e, 1) })
-                    }
-                }) { menuTarget = null }
-            }
-            is MenuTarget.AddToGroupT -> ActionMenuDialog("Add to group", buildList {
-                groups.forEach { (id, name) -> add(MenuItem(name) { addToGroup(id, target.entry) }) }
-                add(MenuItem("+ New group…", close = false) {
-                    menuTarget = null
-                    textPrompt = TextPrompt("Group name", "") { n -> if (n.isNotBlank()) addToGroup(newGroup(n.trim()), target.entry) }
-                })
-            }) { menuTarget = null }
-            is MenuTarget.GroupT -> ActionMenuDialog(groups[target.id] ?: "Group", listOf(
-                MenuItem("Rename…") {
-                    textPrompt = TextPrompt("Group name", groups[target.id].orEmpty()) { n ->
-                        if (n.isNotBlank()) {
-                            groups = groups + (target.id to n.trim())
-                            store.setMap("groups", groups)
-                            if (category?.id == "g:${target.id}") category = Category("g:${target.id}", n.trim())
-                        }
-                    }
-                },
-                MenuItem("Delete group") { deleteGroup(target.id) },
-            )) { menuTarget = null }
-            is MenuTarget.CatT -> {
-                val kind = target.kind
-                val c = target.cat
-                val k = catKey(kind, c.id)
-                ActionMenuDialog(catName(kind, c), buildList {
-                    add(MenuItem(if (k in pinnedCats) "Unpin from top" else "Pin to top") { togglePinnedCat(k) })
-                    add(MenuItem("Rename…") { textPrompt = TextPrompt("Rename", catName(kind, c)) { rename(k, it) } })
-                    if (k in renames) add(MenuItem("Reset name") { rename(k, "") })
-                    add(MenuItem(if (k in hiddenCats) "Unhide" else "Hide") { toggleHiddenCat(k) })
-                    add(MenuItem("Move earlier", close = false) { moveCategory(kind, c, -1) })
-                    add(MenuItem("Move later", close = false) { moveCategory(kind, c, 1) })
-                    add(
-                        MenuItem(
-                            if (k in lockedCats) "Remove PIN lock" else if (hasPin) "Lock with PIN" else "Lock with PIN (set a PIN in Settings first)",
-                            enabled = hasPin || k in lockedCats,
-                        ) {
-                            if (k in lockedCats && !unlocked) requirePin("Enter PIN") { toggleLockedCat(k) } else toggleLockedCat(k)
-                        }
-                    )
-                }) { menuTarget = null }
-            }
-        }
-    }
-
-    actor?.let { (name, _) -> ActorDialog(name, actorMovies, onOpen = { onEntry(it) }, onDismiss = { actor = null }) }
-    if (crashShown) {
-        val full = CrashLog.read(ctx).orEmpty()
-        CrashDialog(CrashLog.latest(full) ?: full, CrashLog.file(ctx).absolutePath, onClear = { CrashLog.clear(ctx); crashShown = false; layoutTick++ }, onDismiss = { crashShown = false })
-    }
-    programTarget?.let { (ch, p) ->
-        val id = "${ch.id}:${p.start}"
-        val reminded = id in reminderKeys
-        val scheduled = Recorder.jobs(ctx).any { it.id == id }
-        ActionMenuDialog(p.title, buildList {
-            add(MenuItem(if (reminded) "Remove reminder" else "Remind me") { toggleReminder(ch, p) })
-            if (ch.kind == Kind.LIVE && !kidsMode) add(MenuItem(if (scheduled) "Cancel recording" else "Record this programme") {
-                if (scheduled) { Recorder.cancel(ctx, id); toast("Recording cancelled") } else scheduleRecording(ch, p)
-            })
-            if (ch.kind == Kind.LIVE && !kidsMode) {
-                val hasRule = seriesRules.mapNotNull(::decodeRule).any { it.first.id == ch.id && it.second.equals(p.title, true) }
-                add(MenuItem(if (hasRule) "Stop recording every episode" else "Record every episode of this show") {
-                    if (hasRule) { removeSeriesRule(ch, p.title); toast("Series recording stopped") }
-                    else { addSeriesRule(ch, p.title); scheduleRecording(ch, p, quiet = true); scanSeriesRules(); toast("Recording every episode of ${p.title}") }
-                })
-            }
-        }) { programTarget = null }
-    }
-    if (seriesOpen) {
-        ActionMenuDialog("Series recordings", buildList {
-            val rules = seriesRules.mapNotNull(::decodeRule)
-            if (rules.isEmpty()) add(MenuItem("None yet. In the Guide, select a programme and choose \"Record every episode\".", enabled = false) {})
-            rules.forEach { (ch, title) ->
-                add(MenuItem("$title  ·  ${nameOf(ch)}  (select to stop)", close = false) { removeSeriesRule(ch, title) })
-            }
-            add(MenuItem("Check for new episodes now") { scanSeriesRules() })
-            add(MenuItem("Close") {})
-        }) { seriesOpen = false }
-    }
-    if (recOpen) {
-        val fmt = remember { java.text.SimpleDateFormat("EEE h:mm a", java.util.Locale.getDefault()) }
-        val files = Recorder.files(ctx)
-        val jobs = Recorder.jobs(ctx)
-        ActionMenuDialog("Recordings", buildList {
-            Recorder.active.entries.forEach { (_, st) ->
-                add(MenuItem("● Recording: ${st.name}  (select to stop)", close = false) { st.stop = true; recOpen = false })
-            }
-            jobs.forEach { j ->
-                add(MenuItem("Scheduled ${fmt.format(java.util.Date(j.startMs))}  ${j.name}  (select to cancel)", close = false) {
-                    Recorder.cancel(ctx, j.id); recOpen = false
-                })
-            }
-            files.forEach { f ->
-                add(MenuItem("${f.name.removeSuffix(".ts")}  ·  ${f.length() / 1_000_000} MB", close = false) { recFile = f; recOpen = false })
-            }
-            if (files.isEmpty() && jobs.isEmpty() && Recorder.active.isEmpty()) add(MenuItem("Nothing recorded yet", enabled = false) {})
-            add(MenuItem("Close") {})
-        }) { recOpen = false }
-    }
-    recFile?.let { f ->
-        ActionMenuDialog(f.name, listOf(
-            MenuItem("Play") { playNow(Entry(Kind.MOVIE, "file://${f.absolutePath}", f.name.removeSuffix(".ts"), "ts"), true) },
-            MenuItem("Delete") { f.delete() },
-        )) { recFile = null }
-    }
-    if (timesUp) {
-        ActionMenuDialog("Screen time is up for today", listOf(
-            MenuItem("Parent PIN: add 30 minutes") {
-                requirePin("Parent PIN") { store.setLong("kidsExtra_${dayKey()}", kidsExtraMin() + 30); timesUp = false }
-            },
-            MenuItem("OK") {},
-        )) { timesUp = false }
-    }
-    syncInfo?.let { info ->
-        ActionMenuDialog("Share settings", listOf(
-            MenuItem("On the other device choose \"Get settings from another device\" and enter:", enabled = false) {},
-            MenuItem("Address   ${info.url}", enabled = false) {},
-            MenuItem("Code   ${info.code}", enabled = false) {},
-            MenuItem("Stop sharing") { stopSharing() },
-        )) { stopSharing() }
-    }
-    dueReminder?.let { r ->
-        ActionMenuDialog("Starting now: ${r.title}", listOf(
-            MenuItem("Watch on ${nameOf(r.channel)}") { guideOpen = false; playNow(r.channel, true) },
-            MenuItem("Dismiss") {},
-        )) { dueReminder = null }
-    }
-    if (remindersOpen) {
-        val fmt = remember { java.text.SimpleDateFormat("EEE h:mm a", java.util.Locale.getDefault()) }
-        val list = reminders.mapNotNull(::decodeReminder).sortedBy { it.start }
-        ActionMenuDialog("Reminders", buildList {
-            if (list.isEmpty()) add(MenuItem("None yet. Open the Guide and select an upcoming programme.", enabled = false) {})
-            list.forEach { r ->
-                add(MenuItem("${fmt.format(java.util.Date(r.start))}  ${r.title}  ·  ${nameOf(r.channel)}  (remove)", close = false) {
-                    reminders = reminders.filter { s -> decodeReminder(s)?.let { it.channel.id == r.channel.id && it.start == r.start } != true }
-                    store.setList("reminders", reminders)
-                })
-            }
-            add(MenuItem("Close") {})
-        }) { remindersOpen = false }
-    }
-
-    if (showOptions) {
-        @Suppress("UNUSED_EXPRESSION") tracksTick
-        val e = current
-        val curProg = nowNext(epg, now).first
-        val behind = if (player.currentLiveOffset != C.TIME_UNSET) player.currentLiveOffset else 0L
-        ActionMenuDialog(
-            "Player options",
-            buildList {
-                add(MenuItem(streamDetails(player), enabled = false) {})
-                if (e != null && e.isLiveNow && !kidsMode) {
-                    val rid = "live:${e.id}"
-                    if (Recorder.active.containsKey(rid)) add(MenuItem("■ Stop recording") { Recorder.active[rid]?.stop = true })
-                    else {
-                        if (curProg != null) add(MenuItem("● Record rest of this programme") {
-                            recordNow(e, curProg.stop - System.currentTimeMillis() + 120_000, "${nameOf(e)} ${curProg.title}")
-                        })
-                        add(MenuItem("● Record 60 minutes") { recordNow(e, 3_600_000L, nameOf(e)) })
-                    }
-                    add(MenuItem("Add to multiview (${multiList.size}/4)") { addToMulti(e) })
-                }
-                if (Build.VERSION.SDK_INT >= 26) add(MenuItem("Picture-in-picture") { (ctx as? MainActivity)?.enterPip() })
-                add(MenuItem(audioLabel(player), close = false) { cycleAudio(player); tracksTick++ })
-                add(MenuItem(textLabel(player), close = false) { cycleText(player); tracksTick++ })
-                add(MenuItem("Picture: ${RESIZES[resizeIdx].second}${if (e != null && e.kind == Kind.LIVE) "  (remembered for this channel)" else ""}", close = false) {
-                    resizeIdx = (resizeIdx + 1) % RESIZES.size
-                    if (e != null && e.kind == Kind.LIVE) store.setString("ar_${e.key()}", resizeIdx.toString())
-                    else store.setInt("resize", resizeIdx)
-                })
-                if (e != null && e.isLiveNow) {
-                    val cur = chShifts[e.id]?.toIntOrNull() ?: 0
-                    fun setShift(h: Int) {
-                        val v = h.coerceIn(-12, 12)
-                        chShifts = if (v == 0) chShifts - e.id else chShifts + (e.id to v.toString())
-                        store.setMap("chShift", chShifts)
-                    }
-                    add(MenuItem("This channel's guide time: ${if (cur >= 0) "+" else ""}$cur h  (select = +1 h)", close = false) { setShift(cur + 1) })
-                    add(MenuItem("This channel's guide time: −1 h", close = false) { setShift(cur - 1) })
-                }
-                if (e != null && e.isLiveNow) {
-                    if (behind > 3000) add(MenuItem("Jump to live") { player.seekToDefaultPosition() })
-                    if (curProg?.archive == true) {
-                        add(MenuItem("↺ Restart “${curProg.title}” (catch-up)") { playNow(catchUpEntry(e, curProg), true) })
-                    }
-                    add(MenuItem("Stream format: ${if (liveTs) "TS" else "HLS"}  (switch if a channel won't play)", close = false) {
-                        liveTs = !liveTs; store.setFlag("liveTs", liveTs); reloadTick++
-                    })
-                }
-                add(MenuItem("Sleep timer: ${if (SLEEP_STEPS[sleepIdx] == 0) "off" else "${SLEEP_STEPS[sleepIdx]} min"}", close = false) {
-                    sleepIdx = (sleepIdx + 1) % SLEEP_STEPS.size
-                    sleepAt = if (sleepIdx == 0) 0L else System.currentTimeMillis() + SLEEP_STEPS[sleepIdx] * 60_000L
-                })
-                if (e != null) {
-                    add(MenuItem(if (e.key() in favKeys) "★ Remove from favorites" else "☆ Add to favorites", close = false) { toggleFavorite(e) })
-                }
-                add(MenuItem("Close") {})
-            },
-        ) { showOptions = false }
-    }
-
+    val isLive = current?.isLiveNow == true
     fun setLayout(key: String, v: Int) { store.setInt(key, v); LayoutPrefs.load(store); layoutTick++ }
     fun setLayoutFlag(key: String, v: Boolean) { store.setFlag(key, v); LayoutPrefs.load(store); layoutTick++ }
     fun openSettings() {
@@ -1908,7 +1673,6 @@ private fun AppState.AppBody() {
             PinResult.KEEP
         }
     }
-    @Suppress("UNUSED_EXPRESSION") layoutTick
     fun buildSettingSections(): List<SettingSection> {
         val active = profiles.firstOrNull { it.id == activeProfile } ?: profiles.first()
         fun onOff(b: Boolean) = if (b) "On" else "Off"
@@ -2135,6 +1899,292 @@ private fun AppState.AppBody() {
     }
     val settingSections = if (showSettings) buildSettingSections() else emptyList()
 
+    val isCatchUp = current?.isCatchUp == true
+    val resizeMode = RESIZES[resizeIdx].first
+
+    val previewPane: @Composable ColumnScope.() -> Unit = {
+        val e = current
+        if (e == null) {
+            Box(
+                Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).background(Palette.surface),
+                contentAlignment = Alignment.Center,
+            ) { Text("Select a channel to start watching", color = Palette.muted) }
+        } else {
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).background(Color.Black)) {
+                if (!fullscreen) PlayerSurface(player, !isTv && !isLive, resizeMode, Modifier.fillMaxSize())
+            }
+            Text(
+                titleFor(e), Modifier.padding(top = 12.dp),
+                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+            )
+            if (isLive) {
+                val (cur, next) = nowNext(epg, now)
+                if (cur != null) {
+                    Text("${cur.title}  ·  until ${clockText(cur.stop)}", modifier = Modifier.padding(top = 4.dp))
+                    ProgressLine(((now - cur.start).toFloat() / (cur.stop - cur.start).coerceAtLeast(1)), Modifier.fillMaxWidth().padding(top = 8.dp))
+                }
+                if (next != null) Text("Next ${clockText(next.start)}: ${next.title}", color = Palette.muted, modifier = Modifier.padding(top = 6.dp))
+            }
+            playbackError?.let { Text(it, color = Palette.live, modifier = Modifier.padding(top = 6.dp)) }
+            Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ActionButton("Fullscreen") { fullscreen = true }
+                ActionButton("Options", primary = false) { showOptions = true }
+            }
+            if (isTv) {
+                Text(
+                    "OK on a channel: play, OK again: fullscreen  ·  hold OK: menu  ·  Back: home",
+                    color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 10.dp),
+                )
+            }
+        }
+    }
+
+    Chunk {
+    pinRequest?.let { req ->
+        key(req, pinWrongCount) {
+            PinPadDialog(
+                req.title, pinError,
+                onDone = { pin ->
+                    when (req.onPin(pin)) {
+                        PinResult.CLOSE -> { pinRequest = null; pinError = null }
+                        PinResult.KEEP -> pinError = null
+                        PinResult.WRONG -> { pinError = "Wrong PIN"; pinWrongCount++ }
+                    }
+                },
+                onCancel = { pinRequest = null; pinError = null },
+            )
+        }
+    }
+    textPrompt?.let { TextPromptDialog(it) { textPrompt = null } }
+
+    menuTarget?.takeIf { !kidsMode }?.let { target ->
+        when (target) {
+            is MenuTarget.EntryT -> {
+                val e = target.entry
+                val k = e.key()
+                ActionMenuDialog(nameOf(e), buildList {
+                    add(MenuItem(if (k in favKeys) "Remove from favorites" else "Add to favorites") { toggleFavorite(e) })
+                    if (e.kind == Kind.MOVIE || e.kind == Kind.SERIES) {
+                        add(MenuItem(if (k in myKeys) "Remove from My list" else "Add to My list") { toggleMyList(e) })
+                    }
+                    if (e.kind == Kind.LIVE) add(MenuItem("Add to multiview (${multiList.size}/4)") { addToMulti(e) })
+                    if (e.kind == Kind.LIVE) add(MenuItem("Add to group…", close = false) { menuTarget = MenuTarget.AddToGroupT(e) })
+                    if (e.kind == Kind.LIVE && category?.id?.startsWith("g:") == true) {
+                        add(MenuItem("Remove from this group") { removeFromGroup(category!!.id.removePrefix("g:"), e) })
+                    }
+                    add(MenuItem("Rename…") { textPrompt = TextPrompt("Rename", nameOf(e)) { rename(k, it) } })
+                    if (k in renames) add(MenuItem("Reset name") { rename(k, "") })
+                    add(MenuItem(if (k in hiddenEntries) "Unhide" else "Hide") { toggleHiddenEntry(k) })
+                    if (tab == Tab.FAVORITES) {
+                        add(MenuItem("Move earlier", close = false) { moveFavorite(e, -1) })
+                        add(MenuItem("Move later", close = false) { moveFavorite(e, 1) })
+                    }
+                }) { menuTarget = null }
+            }
+            is MenuTarget.AddToGroupT -> ActionMenuDialog("Add to group", buildList {
+                groups.forEach { (id, name) -> add(MenuItem(name) { addToGroup(id, target.entry) }) }
+                add(MenuItem("+ New group…", close = false) {
+                    menuTarget = null
+                    textPrompt = TextPrompt("Group name", "") { n -> if (n.isNotBlank()) addToGroup(newGroup(n.trim()), target.entry) }
+                })
+            }) { menuTarget = null }
+            is MenuTarget.GroupT -> ActionMenuDialog(groups[target.id] ?: "Group", listOf(
+                MenuItem("Rename…") {
+                    textPrompt = TextPrompt("Group name", groups[target.id].orEmpty()) { n ->
+                        if (n.isNotBlank()) {
+                            groups = groups + (target.id to n.trim())
+                            store.setMap("groups", groups)
+                            if (category?.id == "g:${target.id}") category = Category("g:${target.id}", n.trim())
+                        }
+                    }
+                },
+                MenuItem("Delete group") { deleteGroup(target.id) },
+            )) { menuTarget = null }
+            is MenuTarget.CatT -> {
+                val kind = target.kind
+                val c = target.cat
+                val k = catKey(kind, c.id)
+                ActionMenuDialog(catName(kind, c), buildList {
+                    add(MenuItem(if (k in pinnedCats) "Unpin from top" else "Pin to top") { togglePinnedCat(k) })
+                    add(MenuItem("Rename…") { textPrompt = TextPrompt("Rename", catName(kind, c)) { rename(k, it) } })
+                    if (k in renames) add(MenuItem("Reset name") { rename(k, "") })
+                    add(MenuItem(if (k in hiddenCats) "Unhide" else "Hide") { toggleHiddenCat(k) })
+                    add(MenuItem("Move earlier", close = false) { moveCategory(kind, c, -1) })
+                    add(MenuItem("Move later", close = false) { moveCategory(kind, c, 1) })
+                    add(
+                        MenuItem(
+                            if (k in lockedCats) "Remove PIN lock" else if (hasPin) "Lock with PIN" else "Lock with PIN (set a PIN in Settings first)",
+                            enabled = hasPin || k in lockedCats,
+                        ) {
+                            if (k in lockedCats && !unlocked) requirePin("Enter PIN") { toggleLockedCat(k) } else toggleLockedCat(k)
+                        }
+                    )
+                }) { menuTarget = null }
+            }
+        }
+    }
+
+    actor?.let { (name, _) -> ActorDialog(name, actorMovies, onOpen = { onEntry(it) }, onDismiss = { actor = null }) }
+    if (crashShown) {
+        val full = CrashLog.read(ctx).orEmpty()
+        CrashDialog(CrashLog.latest(full) ?: full, CrashLog.file(ctx).absolutePath, onClear = { CrashLog.clear(ctx); crashShown = false; layoutTick++ }, onDismiss = { crashShown = false })
+    }
+    programTarget?.let { (ch, p) ->
+        val id = "${ch.id}:${p.start}"
+        val reminded = id in reminderKeys
+        val scheduled = Recorder.jobs(ctx).any { it.id == id }
+        ActionMenuDialog(p.title, buildList {
+            add(MenuItem(if (reminded) "Remove reminder" else "Remind me") { toggleReminder(ch, p) })
+            if (ch.kind == Kind.LIVE && !kidsMode) add(MenuItem(if (scheduled) "Cancel recording" else "Record this programme") {
+                if (scheduled) { Recorder.cancel(ctx, id); toast("Recording cancelled") } else scheduleRecording(ch, p)
+            })
+            if (ch.kind == Kind.LIVE && !kidsMode) {
+                val hasRule = seriesRules.mapNotNull(::decodeRule).any { it.first.id == ch.id && it.second.equals(p.title, true) }
+                add(MenuItem(if (hasRule) "Stop recording every episode" else "Record every episode of this show") {
+                    if (hasRule) { removeSeriesRule(ch, p.title); toast("Series recording stopped") }
+                    else { addSeriesRule(ch, p.title); scheduleRecording(ch, p, quiet = true); scanSeriesRules(); toast("Recording every episode of ${p.title}") }
+                })
+            }
+        }) { programTarget = null }
+    }
+    if (seriesOpen) {
+        ActionMenuDialog("Series recordings", buildList {
+            val rules = seriesRules.mapNotNull(::decodeRule)
+            if (rules.isEmpty()) add(MenuItem("None yet. In the Guide, select a programme and choose \"Record every episode\".", enabled = false) {})
+            rules.forEach { (ch, title) ->
+                add(MenuItem("$title  ·  ${nameOf(ch)}  (select to stop)", close = false) { removeSeriesRule(ch, title) })
+            }
+            add(MenuItem("Check for new episodes now") { scanSeriesRules() })
+            add(MenuItem("Close") {})
+        }) { seriesOpen = false }
+    }
+    if (recOpen) {
+        val fmt = remember { java.text.SimpleDateFormat("EEE h:mm a", java.util.Locale.getDefault()) }
+        val files = Recorder.files(ctx)
+        val jobs = Recorder.jobs(ctx)
+        ActionMenuDialog("Recordings", buildList {
+            Recorder.active.entries.forEach { (_, st) ->
+                add(MenuItem("● Recording: ${st.name}  (select to stop)", close = false) { st.stop = true; recOpen = false })
+            }
+            jobs.forEach { j ->
+                add(MenuItem("Scheduled ${fmt.format(java.util.Date(j.startMs))}  ${j.name}  (select to cancel)", close = false) {
+                    Recorder.cancel(ctx, j.id); recOpen = false
+                })
+            }
+            files.forEach { f ->
+                add(MenuItem("${f.name.removeSuffix(".ts")}  ·  ${f.length() / 1_000_000} MB", close = false) { recFile = f; recOpen = false })
+            }
+            if (files.isEmpty() && jobs.isEmpty() && Recorder.active.isEmpty()) add(MenuItem("Nothing recorded yet", enabled = false) {})
+            add(MenuItem("Close") {})
+        }) { recOpen = false }
+    }
+    recFile?.let { f ->
+        ActionMenuDialog(f.name, listOf(
+            MenuItem("Play") { playNow(Entry(Kind.MOVIE, "file://${f.absolutePath}", f.name.removeSuffix(".ts"), "ts"), true) },
+            MenuItem("Delete") { f.delete() },
+        )) { recFile = null }
+    }
+    if (timesUp) {
+        ActionMenuDialog("Screen time is up for today", listOf(
+            MenuItem("Parent PIN: add 30 minutes") {
+                requirePin("Parent PIN") { store.setLong("kidsExtra_${dayKey()}", kidsExtraMin() + 30); timesUp = false }
+            },
+            MenuItem("OK") {},
+        )) { timesUp = false }
+    }
+    syncInfo?.let { info ->
+        ActionMenuDialog("Share settings", listOf(
+            MenuItem("On the other device choose \"Get settings from another device\" and enter:", enabled = false) {},
+            MenuItem("Address   ${info.url}", enabled = false) {},
+            MenuItem("Code   ${info.code}", enabled = false) {},
+            MenuItem("Stop sharing") { stopSharing() },
+        )) { stopSharing() }
+    }
+    dueReminder?.let { r ->
+        ActionMenuDialog("Starting now: ${r.title}", listOf(
+            MenuItem("Watch on ${nameOf(r.channel)}") { guideOpen = false; playNow(r.channel, true) },
+            MenuItem("Dismiss") {},
+        )) { dueReminder = null }
+    }
+    if (remindersOpen) {
+        val fmt = remember { java.text.SimpleDateFormat("EEE h:mm a", java.util.Locale.getDefault()) }
+        val list = reminders.mapNotNull(::decodeReminder).sortedBy { it.start }
+        ActionMenuDialog("Reminders", buildList {
+            if (list.isEmpty()) add(MenuItem("None yet. Open the Guide and select an upcoming programme.", enabled = false) {})
+            list.forEach { r ->
+                add(MenuItem("${fmt.format(java.util.Date(r.start))}  ${r.title}  ·  ${nameOf(r.channel)}  (remove)", close = false) {
+                    reminders = reminders.filter { s -> decodeReminder(s)?.let { it.channel.id == r.channel.id && it.start == r.start } != true }
+                    store.setList("reminders", reminders)
+                })
+            }
+            add(MenuItem("Close") {})
+        }) { remindersOpen = false }
+    }
+
+    }
+    Chunk {
+    if (showOptions) {
+        @Suppress("UNUSED_EXPRESSION") tracksTick
+        val e = current
+        val curProg = nowNext(epg, now).first
+        val behind = if (player.currentLiveOffset != C.TIME_UNSET) player.currentLiveOffset else 0L
+        ActionMenuDialog(
+            "Player options",
+            buildList {
+                add(MenuItem(streamDetails(player), enabled = false) {})
+                if (e != null && e.isLiveNow && !kidsMode) {
+                    val rid = "live:${e.id}"
+                    if (Recorder.active.containsKey(rid)) add(MenuItem("■ Stop recording") { Recorder.active[rid]?.stop = true })
+                    else {
+                        if (curProg != null) add(MenuItem("● Record rest of this programme") {
+                            recordNow(e, curProg.stop - System.currentTimeMillis() + 120_000, "${nameOf(e)} ${curProg.title}")
+                        })
+                        add(MenuItem("● Record 60 minutes") { recordNow(e, 3_600_000L, nameOf(e)) })
+                    }
+                    add(MenuItem("Add to multiview (${multiList.size}/4)") { addToMulti(e) })
+                }
+                if (Build.VERSION.SDK_INT >= 26) add(MenuItem("Picture-in-picture") { (ctx as? MainActivity)?.enterPip() })
+                add(MenuItem(audioLabel(player), close = false) { cycleAudio(player); tracksTick++ })
+                add(MenuItem(textLabel(player), close = false) { cycleText(player); tracksTick++ })
+                add(MenuItem("Picture: ${RESIZES[resizeIdx].second}${if (e != null && e.kind == Kind.LIVE) "  (remembered for this channel)" else ""}", close = false) {
+                    resizeIdx = (resizeIdx + 1) % RESIZES.size
+                    if (e != null && e.kind == Kind.LIVE) store.setString("ar_${e.key()}", resizeIdx.toString())
+                    else store.setInt("resize", resizeIdx)
+                })
+                if (e != null && e.isLiveNow) {
+                    val cur = chShifts[e.id]?.toIntOrNull() ?: 0
+                    fun setShift(h: Int) {
+                        val v = h.coerceIn(-12, 12)
+                        chShifts = if (v == 0) chShifts - e.id else chShifts + (e.id to v.toString())
+                        store.setMap("chShift", chShifts)
+                    }
+                    add(MenuItem("This channel's guide time: ${if (cur >= 0) "+" else ""}$cur h  (select = +1 h)", close = false) { setShift(cur + 1) })
+                    add(MenuItem("This channel's guide time: −1 h", close = false) { setShift(cur - 1) })
+                }
+                if (e != null && e.isLiveNow) {
+                    if (behind > 3000) add(MenuItem("Jump to live") { player.seekToDefaultPosition() })
+                    if (curProg?.archive == true) {
+                        add(MenuItem("↺ Restart “${curProg.title}” (catch-up)") { playNow(catchUpEntry(e, curProg), true) })
+                    }
+                    add(MenuItem("Stream format: ${if (liveTs) "TS" else "HLS"}  (switch if a channel won't play)", close = false) {
+                        liveTs = !liveTs; store.setFlag("liveTs", liveTs); reloadTick++
+                    })
+                }
+                add(MenuItem("Sleep timer: ${if (SLEEP_STEPS[sleepIdx] == 0) "off" else "${SLEEP_STEPS[sleepIdx]} min"}", close = false) {
+                    sleepIdx = (sleepIdx + 1) % SLEEP_STEPS.size
+                    sleepAt = if (sleepIdx == 0) 0L else System.currentTimeMillis() + SLEEP_STEPS[sleepIdx] * 60_000L
+                })
+                if (e != null) {
+                    add(MenuItem(if (e.key() in favKeys) "★ Remove from favorites" else "☆ Add to favorites", close = false) { toggleFavorite(e) })
+                }
+                add(MenuItem("Close") {})
+            },
+        ) { showOptions = false }
+    }
+
+    @Suppress("UNUSED_EXPRESSION") layoutTick
+    }
+    Chunk {
     if (accountOpen) {
         val a = account
         ActionMenuDialog(
@@ -2187,48 +2237,8 @@ private fun AppState.AppBody() {
     }
 
     // ---- reusable pieces of the main UI
-    val isLive = current?.isLiveNow == true
-    val isCatchUp = current?.isCatchUp == true
-    val resizeMode = RESIZES[resizeIdx].first
-
-    val previewPane: @Composable ColumnScope.() -> Unit = {
-        val e = current
-        if (e == null) {
-            Box(
-                Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).background(Palette.surface),
-                contentAlignment = Alignment.Center,
-            ) { Text("Select a channel to start watching", color = Palette.muted) }
-        } else {
-            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).background(Color.Black)) {
-                if (!fullscreen) PlayerSurface(player, !isTv && !isLive, resizeMode, Modifier.fillMaxSize())
-            }
-            Text(
-                titleFor(e), Modifier.padding(top = 12.dp),
-                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
-            )
-            if (isLive) {
-                val (cur, next) = nowNext(epg, now)
-                if (cur != null) {
-                    Text("${cur.title}  ·  until ${clockText(cur.stop)}", modifier = Modifier.padding(top = 4.dp))
-                    ProgressLine(((now - cur.start).toFloat() / (cur.stop - cur.start).coerceAtLeast(1)), Modifier.fillMaxWidth().padding(top = 8.dp))
-                }
-                if (next != null) Text("Next ${clockText(next.start)}: ${next.title}", color = Palette.muted, modifier = Modifier.padding(top = 6.dp))
-            }
-            playbackError?.let { Text(it, color = Palette.live, modifier = Modifier.padding(top = 6.dp)) }
-            Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ActionButton("Fullscreen") { fullscreen = true }
-                ActionButton("Options", primary = false) { showOptions = true }
-            }
-            if (isTv) {
-                Text(
-                    "OK on a channel: play, OK again: fullscreen  ·  hold OK: menu  ·  Back: home",
-                    color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 10.dp),
-                )
-            }
-        }
-    }
-
     // ---- main UI
+    }
     LaunchedEffect(provider) { if (provider != null) bootDone = true }
     LaunchedEffect(busy) { if (busy) sawBusy = true else if (sawBusy) bootDone = true }
     LaunchedEffect(Unit) { delay(20_000); bootDone = true }
@@ -2346,6 +2356,7 @@ private fun AppState.AppBody() {
             }
             .then(if (fullscreen) Modifier.focusRequester(rootFocus).focusable() else Modifier)
     ) {
+        Chunk {
         if (showWho) {
             ProfilePicker(profiles, store::isKids, activeProfile) { pr ->
                 showWho = false
@@ -2827,6 +2838,7 @@ private fun AppState.AppBody() {
                 }
             }
 
+        }
         }
     }
 }

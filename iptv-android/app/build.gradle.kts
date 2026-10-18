@@ -11,7 +11,7 @@ val isBeta = project.findProperty("beta") == "true"
 
 android {
     namespace = "com.greenslocks.iptv"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.greenslocks.iptv"
@@ -59,7 +59,8 @@ android {
 }
 
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2024.10.01"))
+    implementation(platform("androidx.compose:compose-bom:2026.02.01"))
+    implementation("androidx.tv:tv-material:1.1.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui")
@@ -86,3 +87,9 @@ dependencies {
 }
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
+
+// Keeps the generated code of the big App screen under the JVM's 64KB-per-method limit.
+composeCompiler {
+    includeSourceInformation.set(false)
+    includeTraceMarkers.set(false)
+}
