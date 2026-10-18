@@ -322,6 +322,7 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     var subLang by mutableIntStateOf(store.int("subLang", 0))
     var layoutTick by mutableIntStateOf(0)
     var trackPanelOpen by mutableStateOf(false)
+    var trackSizeFocus by mutableStateOf(false)
     var trackTick by mutableIntStateOf(0)
     val trackFocus = FocusRequester()
     var zapStrip by mutableStateOf(store.flag("zapStrip", false))
@@ -2272,7 +2273,8 @@ private fun AppState.AppBody() {
                 if (trackPanelOpen) {
                     trackTick++
                     return@onPreviewKeyEvent when (ev.key) {
-                        Key.DirectionLeft, Key.Captions, Key.MediaAudioTrack -> { trackPanelOpen = false; true }
+                        Key.DirectionLeft -> if (trackSizeFocus) false else { trackPanelOpen = false; true } // on the size chips Left moves between them
+                        Key.Captions, Key.MediaAudioTrack -> { trackPanelOpen = false; true }
                         else -> false // Up/Down/OK go to the rows in the panel
                     }
                 }
@@ -2465,6 +2467,7 @@ private fun AppState.AppBody() {
                     onAudio = { selectAudio(player, it); tracksTick++ },
                     onText = { selectText(player, it); tracksTick++ },
                     onSubSize = { subSize = it; store.setInt("subSize", it) },
+                    onSizeFocus = { trackSizeFocus = it },
                 )
                 ChannelPanel(
                     visible = panelOpen && isLive, mode = panelMode,

@@ -22,11 +22,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 
 /**
  * Quick audio and subtitle picker for the player. Opens from the remote with Right (live), Up (movies and
- * episodes), or a CC / audio button if the remote has one. Left or Back closes it.
+ * episodes), or a CC / audio button if the remote has one. Back closes it; Left closes it from the track lists and moves between the size chips.
  */
 @Composable
 fun BoxScope.TrackPanel(
@@ -40,6 +41,7 @@ fun BoxScope.TrackPanel(
     onAudio: (Int) -> Unit,
     onText: (Int) -> Unit,
     onSubSize: (Int) -> Unit,
+    onSizeFocus: (Boolean) -> Unit = {},
 ) {
     AnimatedVisibility(
         visible, Modifier.align(Alignment.CenterEnd),
@@ -65,12 +67,12 @@ fun BoxScope.TrackPanel(
             }
 
             Label("SUBTITLE SIZE")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.onFocusChanged { onSizeFocus(it.hasFocus) }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 subNames.forEachIndexed { i, n ->
                     Chip(n, subSize == i, if (audio.isEmpty() && text.isEmpty() && i == 0) Modifier.focusRequester(focus) else Modifier) { onSubSize(i) }
                 }
             }
-            Text("Left or Back to close", color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 20.dp))
+            Text("Left (on the lists) or Back to close", color = Palette.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 20.dp))
         }
     }
 }
