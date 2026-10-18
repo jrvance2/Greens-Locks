@@ -4,6 +4,7 @@ import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 /** Simple playback numbers so "is it faster?" has an answer. Shown in Settings > About. */
@@ -16,6 +17,15 @@ object Diag {
     var stalls by mutableIntStateOf(0)
     var reconnects by mutableIntStateOf(0)
     var dropped by mutableLongStateOf(0L)
+    var videoDecoder by mutableStateOf("")
+
+    /** "hardware decoder c2.amlogic.hevc.decoder" or "software decoder ...", or a hint before anything has played. */
+    fun decoderText(): String = when {
+        videoDecoder.isBlank() -> "play something to see the decoder"
+        videoDecoder.startsWith("OMX.google") || videoDecoder.startsWith("c2.android") || videoDecoder.contains("sw", true) && !videoDecoder.contains("swiz") ->
+            "software decoder $videoDecoder"
+        else -> "hardware decoder $videoDecoder"
+    }
 
     fun requested() { requestedAt = SystemClock.elapsedRealtime() }
 

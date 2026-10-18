@@ -66,13 +66,13 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.activity:activity-compose:1.9.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
-    implementation("androidx.media3:media3-exoplayer:1.5.0")
-    implementation("androidx.media3:media3-exoplayer-hls:1.5.0")
-    implementation("androidx.media3:media3-ui:1.5.0")
+    implementation("androidx.media3:media3-exoplayer:1.9.4")
+    implementation("androidx.media3:media3-exoplayer-hls:1.9.4")
+    implementation("androidx.media3:media3-ui:1.9.4")
     // Software decoder for Dolby Digital / Digital+ / DTS and more, so 5.1 works even when the device decoder only gives stereo.
-    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
     // Network stack for streaming: connection reuse, redirects, IPv4-first lookups.
-    implementation("androidx.media3:media3-datasource-okhttp:1.5.0")
+    implementation("androidx.media3:media3-datasource-okhttp:1.9.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")

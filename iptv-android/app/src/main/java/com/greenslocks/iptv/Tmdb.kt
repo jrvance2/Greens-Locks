@@ -44,8 +44,11 @@ object Tmdb {
                 .optJSONArray("results")?.optJSONObject(0)?.optString("backdrop_path").orEmpty()
         }.getOrDefault("")
         if (path.isBlank() || path == "null") { misses += ck; "" }
-        else "https://image.tmdb.org/t/p/w1280$path".also { backdrops[ck] = it }
+        else "https://image.tmdb.org/t/p/$backdropSize$path".also { backdrops[ck] = it }
     }
+
+    /** TMDB backdrop size: "original" on a 4K display, "w1280" otherwise (set at startup). */
+    @Volatile var backdropSize = "w1280"
 
     /** Where movie pages are kept between runs (set at startup). */
     @Volatile var cacheDir: java.io.File? = null
@@ -166,7 +169,7 @@ object Tmdb {
             poster = img(d.optString("poster_path"), "w500"),
             trailer = trailer,
             cast = cast,
-            backdrop = img(d.optString("backdrop_path"), "w1280"),
+            backdrop = img(d.optString("backdrop_path"), backdropSize),
             tagline = d.optString("tagline"),
             certification = certification(d, tv),
             castIds = castIds,

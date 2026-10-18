@@ -447,7 +447,12 @@ private fun AppState.AppBody() {
             0 -> DefaultLoadControl.Builder().setBufferDurationsMs(10_000, 20_000, 1_500, 3_000)
             2 -> DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 3_000, 6_000)
             else -> DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 50_000, 1_500, 4_000)
-        }.build()
+        }
+            // 4K streams run at 25-50 Mbit/s: cap the buffer by memory so small-RAM boxes don't run out of heap.
+            .setTargetBufferBytes(
+                (((ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).largeMemoryClass * 0.28f).toInt().coerceIn(48, 160)) * 1024 * 1024
+            )
+            .build()
         // OkHttp for the network (connection reuse, redirects, IPv4 first); file:// recordings still work.
         val http = OkHttpDataSource.Factory(Net.client).setUserAgent(Net.userAgent)
         val extractors = DefaultExtractorsFactory().setTsExtractorFlags(
@@ -471,6 +476,8 @@ private fun AppState.AppBody() {
             init {
                 // If a device can't decode a format or profile (some Dolby Vision, odd HEVC), try another decoder.
                 setEnableDecoderFallback(true)
+                // Queue input to the hardware decoder from a separate thread: fewer dropped frames on 4K before Android 12.
+                forceEnableMediaCodecAsynchronousQueueing()
                 if (effectiveAudio == 3) setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
             }
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink? =
@@ -488,6 +495,8 @@ private fun AppState.AppBody() {
             .build()
     }
     val currentNow by rememberUpdatedState(current)
+    val matchFpsNow by rememberUpdatedState(matchFps)
+    val fullscreenNow by rememberUpdatedState(fullscreen)
     fun variantsFor(e: Entry) = variantsOf(e, entries + allLive.orEmpty(), store.string("pref_${normName(e.title)}"))
     val nextVariant = remember(current, entries, allLive, triedTick) {
         current?.takeIf { it.kind == Kind.LIVE }?.let { c ->
@@ -540,13 +549,20 @@ private fun AppState.AppBody() {
                 if (state == Player.STATE_ENDED) endedTick++
             }
 
-            override fun onVideoSizeChanged(videoSize: VideoSize) { tracksTick++ }
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                tracksTick++
+                val fps = player.videoFormat?.frameRate ?: 0f
+                if (matchFpsNow && fullscreenNow && fps > 0f) ctx.findActivity()?.let { DisplayTools.match(it, fps) }
+            }
 
             override fun onTracksChanged(tracks: Tracks) { tracksTick++ }
         }
         player.addListener(listener)
         val diag = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
             override fun onDroppedVideoFrames(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) { Diag.dropped += droppedFrames }
+            override fun onVideoDecoderInitialized(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+                Diag.videoDecoder = decoderName
+            }
         }
         player.addAnalyticsListener(diag)
         onDispose { player.removeListener(listener); player.removeAnalyticsListener(diag); player.release() }
@@ -1486,6 +1502,9 @@ private fun AppState.AppBody() {
         }
         numBuffer = ""
     }
+    LaunchedEffect(Unit) { Tmdb.backdropSize = if (DisplayTools.physicalWidth(ctx.findActivity()) >= 3000) "original" else "w1280" }
+    // Older Android (Fire TV): put the TV back on its normal refresh rate once the video is closed.
+    LaunchedEffect(fullscreen, matchFps) { if (!fullscreen || !matchFps) ctx.findActivity()?.let { DisplayTools.clear(it) } }
     LaunchedEffect(player, matchFps) {
         player.setVideoChangeFrameRateStrategy(
             if (matchFps) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
@@ -1739,7 +1758,7 @@ private fun AppState.AppBody() {
                     choices = audioNames, selected = audioOrder.indexOf(audioMode).coerceAtLeast(0), onPick = { i -> audioMode = audioOrder[i]; store.setInt("audioMode", audioMode); layoutTick++ }),
                 SettingItem("Buffer", BUFFERS[bufferMode], "Higher means fewer stalls but a slower start",
                     choices = BUFFERS, selected = bufferMode, onPick = { i -> bufferMode = i; store.setInt("buffer", i); layoutTick++ }),
-                toggle("Match frame rate", "Switch the TV to the video's frame rate", matchFps) { matchFps = !matchFps; store.setFlag("matchFps", matchFps) },
+                toggle("Match frame rate", "Switch the TV to the video's frame rate (24 Hz for films). On Fire TV and other Android 6-10 boxes the screen may blank for a second.", matchFps) { matchFps = !matchFps; store.setFlag("matchFps", matchFps) },
                 toggle("Auto-play next episode", "Start the next episode when one ends", autoNext) { autoNext = !autoNext; store.setFlag("autoNext", autoNext) },
                 SettingItem("Preferred audio language", LANG_NAMES[audioLang.coerceIn(0, LANG_NAMES.lastIndex)], "Picked automatically when a stream offers it",
                     choices = LANG_NAMES, selected = audioLang, onPick = { i -> audioLang = i; store.setInt("audioLang", i); layoutTick++ }),
@@ -1888,6 +1907,8 @@ private fun AppState.AppBody() {
                 SettingItem("Vance TV", BuildConfig.VERSION_NAME, "Version of this app", enabled = false),
                 SettingItem("Check for updates", null, "Install the newest version from GitHub", action = { updateOpen = true; checkUpdates(false) }),
                 SettingItem("Playback diagnostics", null, Diag.summary(), action = { Diag.reset(); layoutTick++ }),
+                SettingItem("Display and video decoder", null,
+                    DisplayTools.describe(ctx.findActivity()) + "  \u00B7  " + Diag.decoderText(), enabled = false),
                 SettingItem("Last crash",
                     CrashLog.read(ctx)?.let { CrashLog.latest(it) }?.lineSequence()?.firstOrNull()?.removePrefix("=== ")?.substringBefore("  \u00B7").orEmpty().ifBlank { "None" },
                     "Select to read the error. It is also saved as crash.log in the app's files folder.",

@@ -183,7 +183,10 @@ fun Artwork(
         if (url.isNotBlank()) {
             val ctx = LocalContext.current
             val fade = Dimens.animLevel == 0
-            val request = remember(url, fade) { ImageRequest.Builder(ctx).data(url).crossfade(fade).build() }
+            // Poster-sized art decodes to 16-bit colour to save memory; full-screen backdrops stay 32-bit so
+            // gradients and dark scenes don't band on a 4K TV.
+            val big = url.contains("/t/p/w1280") || url.contains("/t/p/original")
+            val request = remember(url, fade) { ImageRequest.Builder(ctx).data(url).crossfade(fade).allowRgb565(!big).build() }
             AsyncImage(
                 model = request,
                 contentDescription = null, contentScale = fit, alignment = alignment,
