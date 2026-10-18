@@ -406,9 +406,15 @@ fun ActionButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null, onClick: () -> Unit,
 ) {
     FocusCard(modifier, RoundedCornerShape(10.dp), 1.05f, 2.dp, onClick = { if (enabled) onClick() }) {
+        // The fill covers the whole button even when the caller makes it wider than its text.
+        Box(
+            Modifier.matchParentSize().background(
+                if (primary) Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2))
+                else Brush.horizontalGradient(listOf(Palette.surfaceHi, Palette.surfaceHi))
+            )
+        )
         Row(
-            Modifier.background(if (primary) Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2)) else Brush.horizontalGradient(listOf(Palette.surfaceHi, Palette.surfaceHi)))
-                .padding(horizontal = 20.dp, vertical = 11.dp),
+            Modifier.align(Alignment.Center).padding(horizontal = 20.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (icon != null) {
