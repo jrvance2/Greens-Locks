@@ -8,6 +8,7 @@
 - Player: Media3 1.9.4 (was 1.5.0) with the matching FFmpeg audio decoder.
 - 4K: video buffer is capped by the box's memory (never below 96 MB); full-screen backdrops decode in 32-bit colour (no banding) and use TMDB's original size on a 4K display; new opt-in "Match refresh rate (Fire TV)" switches the display mode on Android 6-10 (off by default: it blanks the screen and can hitch playback).
 - Settings > About > "Display and video decoder": shows the TV's current mode (resolution, refresh rate, HDR types) and whether the video decoder is hardware or software.
+- Fix: filter pills no longer have a thin light outline when not focused (only the focused pill gets a ring).
 - Sports: "Live sports" row on Home (games in progress, followed teams first; Settings > Sports > Live sports on Home); "Remind me at kickoff" on upcoming games (pick the channel; you're switched over at the start, same as programme reminders).
 
 ## 1.2.54 (stable; same code as beta 53)

@@ -426,8 +426,14 @@ fun Chip(text: String, selected: Boolean, modifier: Modifier = Modifier, onLongC
             focusedSelectedContainerColor = Palette.accent, focusedSelectedContentColor = Color.White,
             pressedSelectedContainerColor = Palette.accent, pressedSelectedContentColor = Color.White,
         ),
-        border = FilterChipDefaults.border(focusedBorder = Border(BorderStroke(2.dp, Palette.accent), shape = RoundedCornerShape(50)),
-            focusedSelectedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(50))),
+        // Only the focused chip gets a ring; the library's default draws a thin light outline on every chip.
+        border = FilterChipDefaults.border(
+            border = Border.None, selectedBorder = Border.None, disabledBorder = Border.None, selectedDisabledBorder = Border.None,
+            focusedBorder = Border(BorderStroke(2.dp, Palette.accent), shape = RoundedCornerShape(50)),
+            pressedBorder = Border(BorderStroke(2.dp, Palette.accent), shape = RoundedCornerShape(50)),
+            focusedSelectedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(50)),
+            pressedSelectedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(50)),
+        ),
         scale = FilterChipDefaults.scale(focusedScale = grow),
         glow = FilterChipDefaults.glow(),
     ) {
