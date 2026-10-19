@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("io.github.takahirom.roborazzi")
 }
 
 // CI passes -Pvc=<run number> so every published build is newer than the last (needed for in-app updates).
@@ -24,6 +25,8 @@ android {
         buildConfigField("boolean", "BETA", isBeta.toString())
         // The software audio decoder ships native code; only the chips real TV boxes use.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // CI smoke builds also carry x86_64 so an emulator can run them.
+        if (project.findProperty("smoke") == "true") ndk { abiFilters += "x86_64" }
     }
 
     // CI supplies a stable signing key (so updates install over the old app); without one the
@@ -54,7 +57,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    testOptions { unitTests.isReturnDefaultValues = true }
+    testOptions { unitTests { isReturnDefaultValues = true; isIncludeAndroidResources = true } }
     buildFeatures { compose = true; buildConfig = true }
 }
 
@@ -84,6 +87,19 @@ dependencies {
     implementation("androidx.profileinstaller:profileinstaller:1.3.1")
     implementation("com.google.zxing:core:3.5.3")
     implementation("androidx.tvprovider:tvprovider:1.0.0")
+
+    // Screenshot tests of the shared components (JVM, no emulator): see app/src/test/.../screenshots.
+    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.76.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.76.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-junit-rule:1.76.0")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+// The screenshot tests need the debug variant's test activity; the release unit tests skip them.
+tasks.withType<Test>().configureEach {
+    if (name.endsWith("ReleaseUnitTest")) exclude("**/screenshots/**")
 }
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }

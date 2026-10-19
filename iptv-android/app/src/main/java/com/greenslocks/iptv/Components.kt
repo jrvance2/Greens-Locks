@@ -441,38 +441,23 @@ fun Chip(text: String, selected: Boolean, modifier: Modifier = Modifier, onLongC
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun ActionButton(
     text: String, modifier: Modifier = Modifier, primary: Boolean = true, enabled: Boolean = true,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null, onClick: () -> Unit,
 ) {
-    val view = LocalView.current
-    val level = Dimens.animLevel
-    val shape = RoundedCornerShape(10.dp)
-    val grow = if (level == 2) 1f else if (level == 1) 1.02f else 1.05f
-    // Stays focusable when disabled (so a remote can still land on it); it just ignores the click.
-    androidx.tv.material3.Button(
-        onClick = { if (enabled) onClick() },
-        modifier = modifier.onFocusChanged { if (it.isFocused && Dimens.sounds) view.playSoundEffect(SoundEffectConstants.NAVIGATION_RIGHT) },
-        shape = ButtonDefaults.shape(shape),
-        colors = ButtonDefaults.colors(
-            containerColor = Color.Transparent, contentColor = Color.White,
-            focusedContainerColor = Color.Transparent, focusedContentColor = Color.White,
-            pressedContainerColor = Color.Transparent, pressedContentColor = Color.White,
-        ),
-        border = ButtonDefaults.border(focusedBorder = Border(BorderStroke(2.dp, Palette.accent), shape = shape)),
-        scale = ButtonDefaults.scale(focusedScale = grow, pressedScale = grow),
-        glow = ButtonDefaults.glow(focusedGlow = if (level == 0 && Dimens.glow) Glow(Palette.accent.copy(alpha = 0.5f), 14.dp) else Glow.None),
-        contentPadding = PaddingValues(0.dp),
-    ) {
+    // A TV Surface (via FocusCard) rather than the TV Button: the Button's content slot can't paint a gradient over its
+    // whole area without the first button in a Row taking all the width (see ComponentScreenshots.buttonRows).
+    FocusCard(modifier, RoundedCornerShape(10.dp), 1.05f, 2.dp, onClick = { if (enabled) onClick() }) {
         // The fill covers the whole button even when the caller makes it wider than its text.
-        Row(
-            Modifier.fillMaxWidth().background(
+        Box(
+            Modifier.matchParentSize().background(
                 if (primary) Brush.horizontalGradient(listOf(Palette.accent, Palette.accent2))
                 else Brush.horizontalGradient(listOf(Palette.surfaceHi, Palette.surfaceHi))
-            ).padding(horizontal = 20.dp, vertical = 11.dp),
-            horizontalArrangement = Arrangement.Center,
+            )
+        )
+        Row(
+            Modifier.align(Alignment.Center).padding(horizontal = 20.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (icon != null) {
