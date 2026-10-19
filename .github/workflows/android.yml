@@ -38,10 +38,9 @@ jobs:
           fi
       - name: Run unit tests
         run: gradle testReleaseUnitTest --no-daemon -Pvc=${{ github.run_number }} $BETA_FLAG
-      # Pictures of the shared components compared with the saved reference images. Informational until we know the
-      # runner draws text exactly like the machine that recorded them; then this becomes a gate.
+      # Pictures of the shared components compared with the saved reference images; a change fails the build.
+      # After an intended look change run `gradle recordRoborazziDebug` and commit src/test/screenshots.
       - name: Compare component screenshots
-        continue-on-error: true
         run: gradle verifyRoborazziDebug --no-daemon -Pvc=${{ github.run_number }} $BETA_FLAG
       - name: Keep screenshot differences
         if: always()
@@ -78,21 +77,20 @@ jobs:
         with:
           name: vancetv-apk
           path: iptv-android/app/build/outputs/apk/release/app-release.apk
-      # Early warning only (the release above is already published): open the shrunk release build on an emulator.
+      # Opens the shrunk release build on an emulator. It runs after publishing, so a failure shows as a red build
+      # for that commit without holding the release back.
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Build smoke APK (adds x86_64 so the emulator can run it)
-        continue-on-error: true
         run: gradle assembleRelease --no-daemon -Pvc=${{ github.run_number }} $BETA_FLAG -Psmoke=true
         env:
           VANCETV_STORE_PASSWORD: ${{ secrets.VANCETV_STORE_PASSWORD }}
           VANCETV_KEY_ALIAS: ${{ secrets.VANCETV_KEY_ALIAS }}
           VANCETV_KEY_PASSWORD: ${{ secrets.VANCETV_KEY_PASSWORD }}
       - name: Smoke test on an emulator
-        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
