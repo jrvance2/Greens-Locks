@@ -67,16 +67,19 @@ object DisplayTools {
         return d.supportedModes.firstOrNull { it.modeId == pick.id }
     }
 
-    /** Ask the window for the matching mode (Android 6 to 10; newer versions switch seamlessly inside the player). */
+    /**
+     * Ask the window for the matching mode. The player itself only switches when the change is seamless, which a
+     * Shield or Fire TV over HDMI never is, so this opt-in covers Android 6 to 13.
+     */
     fun match(a: Activity, fps: Float) {
-        if (Build.VERSION.SDK_INT !in 23..29) return
+        if (Build.VERSION.SDK_INT !in 23..33) return
         val mode = bestMode(a, fps) ?: return
         val lp = a.window.attributes
         if (lp.preferredDisplayModeId != mode.modeId) { lp.preferredDisplayModeId = mode.modeId; a.window.attributes = lp }
     }
 
     fun clear(a: Activity) {
-        if (Build.VERSION.SDK_INT !in 23..29) return
+        if (Build.VERSION.SDK_INT !in 23..33) return
         val lp = a.window.attributes
         if (lp.preferredDisplayModeId != 0) { lp.preferredDisplayModeId = 0; a.window.attributes = lp }
     }
