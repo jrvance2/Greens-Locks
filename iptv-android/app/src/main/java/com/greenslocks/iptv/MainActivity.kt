@@ -285,6 +285,7 @@ private class AppState(val ctx: Context, val scope: kotlinx.coroutines.Coroutine
     var autoNext by mutableStateOf(store.flag("autoNext", true))
     var matchFps by mutableStateOf(store.flag("matchFps", true))
     var modeSwitch by mutableStateOf(store.flag("modeSwitch", false))
+    var showStats by mutableStateOf(store.flag("stats", false))
     var subSize by mutableIntStateOf(store.int("subSize", 1))
     var liveTs by mutableStateOf(store.flag("liveTs", false))
     var sortMode by mutableIntStateOf(store.int("sortMode", 0))
@@ -528,7 +529,11 @@ private fun AppState.AppBody() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
 
+            private var wasReady = false
+
             override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY) wasReady = true
+                else if (state == Player.STATE_BUFFERING && wasReady) { Diag.rebuffers++; wasReady = false }
                 // Stuck buffering for a long time on live TV: quietly reconnect instead of waiting forever.
                 stall?.cancel()
                 if (state == Player.STATE_BUFFERING && currentNow?.kind == Kind.LIVE) {
@@ -1758,6 +1763,7 @@ private fun AppState.AppBody() {
                 SettingItem("Buffer", BUFFERS[bufferMode], "Higher means fewer stalls but a slower start",
                     choices = BUFFERS, selected = bufferMode, onPick = { i -> bufferMode = i; store.setInt("buffer", i); layoutTick++ }),
                 toggle("Match frame rate", "Switch the TV to the video's frame rate when the player can do it without a blank screen (Android 11 and newer)", matchFps) { matchFps = !matchFps; store.setFlag("matchFps", matchFps) },
+                toggle("Stream stats overlay", "Show resolution, network speed, buffer, dropped frames and decoder over the video, for working out why something stutters", showStats) { showStats = !showStats; store.setFlag("stats", showStats) },
                 toggle("Match refresh rate (Fire TV)", "Android 6-10 boxes: switch the TV to the video's refresh rate (24 Hz for films). The screen blanks for a second and changing channels can hitch, so leave it off unless films judder.", modeSwitch) { modeSwitch = !modeSwitch; store.setFlag("modeSwitch", modeSwitch) },
                 toggle("Auto-play next episode", "Start the next episode when one ends", autoNext) { autoNext = !autoNext; store.setFlag("autoNext", autoNext) },
                 SettingItem("Preferred audio language", LANG_NAMES[audioLang.coerceIn(0, LANG_NAMES.lastIndex)], "Picked automatically when a stream offers it",
@@ -2491,6 +2497,7 @@ private fun AppState.AppBody() {
                     catchUp = isCatchUp, badge = streamBadge(player), behindLiveSec = behindLive, sleepLeftMin = sleepLeft,
                 )
                 nextUp?.let { NextUpCard(it.title, nextUpSecs) }
+                if (showStats) StreamStats(player, ctx) { DisplayTools.describe(ctx.findActivity()) }
                 TrackPanel(
                     visible = trackPanelOpen,
                     details = run { @Suppress("UNUSED_EXPRESSION") tracksTick; streamDetails(player) },

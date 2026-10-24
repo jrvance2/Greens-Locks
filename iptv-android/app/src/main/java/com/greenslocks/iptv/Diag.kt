@@ -18,6 +18,8 @@ object Diag {
     var reconnects by mutableIntStateOf(0)
     var dropped by mutableLongStateOf(0L)
     var videoDecoder by mutableStateOf("")
+    /** Times playback ran dry after it had started. */
+    var rebuffers by mutableIntStateOf(0)
 
     /** "hardware decoder c2.amlogic.hevc.decoder" or "software decoder ...", or a hint before anything has played. */
     fun decoderText(): String = when {
@@ -37,7 +39,7 @@ object Diag {
         lastStartMs = ms; starts++; totalMs += ms; avgStartMs = totalMs / starts
     }
 
-    fun reset() { starts = 0; totalMs = 0; lastStartMs = -1; avgStartMs = -1; stalls = 0; reconnects = 0; dropped = 0 }
+    fun reset() { starts = 0; totalMs = 0; lastStartMs = -1; avgStartMs = -1; stalls = 0; reconnects = 0; dropped = 0; rebuffers = 0 }
 
     fun summary(): String =
         if (starts == 0) "No playback yet"

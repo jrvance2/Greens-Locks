@@ -8,6 +8,7 @@
 - Player: Media3 1.9.4 (was 1.5.0) with the matching FFmpeg audio decoder.
 - 4K: video buffer is capped by the box's memory (never below 96 MB); full-screen backdrops decode in 32-bit colour (no banding) and use TMDB's original size on a 4K display; new opt-in "Match refresh rate (Fire TV)" switches the display mode on Android 6-10 (off by default: it blanks the screen and can hitch playback).
 - Settings > About > "Display and video decoder": shows the TV's current mode (resolution, refresh rate, HDR types) and whether the video decoder is hardware or software.
+- Settings > Playback & audio > "Stream stats overlay": a panel over the video with resolution, stream bitrate, measured network speed, seconds buffered, rebuffer count, dropped frames per second, decoder and display mode. For working out whether a stutter is the network, the decoder or the display.
 - Fix: buttons placed side by side without set widths no longer take all the space (the first one pushed the others off screen); standalone buttons fit their text again. Found by the new screenshot tests.
 - Behind the scenes: screenshot tests of the shared components (pills, buttons, rows) and an emulator smoke test of the shrunk release build in CI.
 - Fix: filter pills no longer have a thin light outline when not focused (only the focused pill gets a ring).

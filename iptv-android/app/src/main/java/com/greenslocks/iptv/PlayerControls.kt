@@ -62,7 +62,7 @@ fun cycleText(p: Player) {
     p.trackSelectionParameters = b.build()
 }
 
-private fun videoCodec(mime: String?): String = when (mime) {
+internal fun videoCodec(mime: String?): String = when (mime) {
     MimeTypes.VIDEO_H265 -> "HEVC"
     MimeTypes.VIDEO_H264 -> "H.264"
     MimeTypes.VIDEO_AV1 -> "AV1"
@@ -73,7 +73,7 @@ private fun videoCodec(mime: String?): String = when (mime) {
     else -> mime.substringAfter('/').uppercase()
 }
 
-private fun audioCodec(mime: String?): String = when (mime) {
+internal fun audioCodec(mime: String?): String = when (mime) {
     MimeTypes.AUDIO_AC3 -> "Dolby Digital"
     MimeTypes.AUDIO_E_AC3 -> "Dolby Digital+"
     MimeTypes.AUDIO_E_AC3_JOC -> "Dolby Atmos"
