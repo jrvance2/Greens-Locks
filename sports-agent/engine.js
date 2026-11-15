@@ -5,9 +5,14 @@ const DIR = path.join(__dirname, 'engine');
 global.window = global;
 const Sim = require(path.join(DIR, 'sim.js'));
 const Travel = require(path.join(DIR, 'travel.js'));
-for (const f of ['data.js', 'backtest-results.js', 'picks-results.js', 'blend-weights.js', 'news-data.js']) { try { require(path.join(DIR, f)); } catch (e) { /* optional */ } }
-const D = window.LIVE_DATA, B = (window.BACKTEST && window.BACKTEST.leagues) || {}, P = (window.PICKS && window.PICKS.leagues) || {}, N = window.NEWS || { items: [] };
-Sim.applyLive(D);
+let D, B, P, N;
+const DATA_FILES = ['data.js', 'backtest-results.js', 'picks-results.js', 'blend-weights.js', 'news-data.js'];
+function load() {   // (re)load the data files; used at startup and after a refresh
+  for (const f of DATA_FILES) { const p = path.join(DIR, f); delete require.cache[p]; try { require(p); } catch (e) { /* optional */ } }
+  D = window.LIVE_DATA; B = (window.BACKTEST && window.BACKTEST.leagues) || {}; P = (window.PICKS && window.PICKS.leagues) || {}; N = window.NEWS || { items: [] };
+  Sim.applyLive(D);
+}
+load();
 const SPORTS = ['nba', 'nfl', 'nhl', 'ncaaf', 'ncaab'];
 const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const rng = Sim.makeRng((Date.now() & 0xffffffff) >>> 0);
@@ -79,4 +84,25 @@ function weeklyReport() {
   return f ? { file: f, text: fs.readFileSync(path.join(dir, f), 'utf8') } : null;
 }
 const dataAgeHours = () => +((Date.now() - new Date(D.generated).getTime()) / 3600e3).toFixed(1);
-module.exports = { SPORTS, listGames, simulate, picks, record, news, listTeams, weeklyReport, dataAgeHours };
+
+// Runs the upstream pipeline (update-data, news, log-picks, score-picks, fit-blend, recap) in a scratch copy of engine/,
+// health-checks it (check.js --ci, same gate the GitHub workflow uses) and only then copies the results into engine/.
+// A failed or partial refresh therefore never replaces good data.
+async function refresh() {
+  const { execFileSync } = require('child_process'), os = require('os');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sports-engine-')), before = D.generated, log = [];
+  try {
+    fs.cpSync(DIR, tmp, { recursive: true });
+    const run = (f, args) => { try { return execFileSync(process.execPath, [path.join(tmp, f)].concat(args || []), { cwd: tmp, encoding: 'utf8', timeout: 8 * 60e3, stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { return 'FAILED ' + f + ': ' + String(e.stderr || e.message).split('\n').slice(0, 4).join(' | '); } };
+    const out = run('refresh.js'); log.push(out.split('\n').filter(l => l.trim()).slice(-14).join('\n'));
+    const m = /generated":"([^"]+)"/.exec(fs.readFileSync(path.join(tmp, 'data.js'), 'utf8').slice(0, 200));
+    if (!m || m[1] === before) return { ok: false, reason: 'Team/schedule data did not update (the data sources were unreachable or returned nothing). Kept the existing data.', log: log.join('\n') };
+    const chk = run('check.js', ['--ci']); log.push(chk.split('\n').slice(-6).join('\n'));
+    if (/FAILED|error/i.test(chk.split('\n').slice(-3).join(' '))) return { ok: false, reason: 'Health check failed; kept the existing data.', log: log.join('\n') };
+    for (const f of ['data.js', 'picks-log.json', 'picks-results.js', 'news-data.js', 'blend-weights.js', 'recap-data.js', 'college-cache.json']) if (fs.existsSync(path.join(tmp, f))) fs.copyFileSync(path.join(tmp, f), path.join(DIR, f));
+    if (fs.existsSync(path.join(tmp, 'picks-archive'))) fs.cpSync(path.join(tmp, 'picks-archive'), path.join(DIR, 'picks-archive'), { recursive: true });
+    load();
+    return { ok: true, dataGenerated: D.generated, log: log.join('\n') };
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+module.exports = { refresh, SPORTS, listGames, simulate, picks, record, news, listTeams, weeklyReport, dataAgeHours };

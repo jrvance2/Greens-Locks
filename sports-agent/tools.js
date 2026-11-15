@@ -7,6 +7,11 @@ const J = o => JSON.stringify(o);
 
 module.exports = [
   betaZodTool({
+    name: 'refresh_data', description: 'Re-pull team ratings, schedules, injuries and news, re-run the simulator over upcoming games, and score finished games. Takes a few minutes and needs internet access. Only replaces the existing data if the refresh succeeds and passes the health check. Use when get_track_record shows the data is more than ~6 hours old and the user wants fresh numbers.',
+    inputSchema: z.object({}),
+    run: async () => J(await E.refresh()),
+  }),
+  betaZodTool({
     name: 'list_games', description: 'Upcoming scheduled games for a sport with the posted line, total and moneylines. Optionally filter by team name or abbreviation.',
     inputSchema: z.object({ sport, team: z.string().optional(), limit: z.number().int().min(1).max(50).optional() }),
     run: async ({ sport, team, limit }) => J(E.listGames(sport, team, limit)),

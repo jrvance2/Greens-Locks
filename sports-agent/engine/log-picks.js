@@ -1,0 +1,86 @@
+// Simulates every upcoming game in data.js and saves a snapshot of the sim vs. the market to picks-log.json.
+// Re-running before a game starts overwrites that game's snapshot, so the last pre-game run is the one scored.
+'use strict';
+const fs = require('fs'), path = require('path');
+global.window = global;
+const Sim = require('./sim.js');
+const Travel = require('./travel.js');
+require('./data.js');
+try { require('./backtest-results.js'); } catch (e) { /* optional */ }
+try { require('./news-data.js'); } catch (e) { /* optional */ }
+const newsFor = (sp, team) => ((window.NEWS && window.NEWS.items) || []).filter(i => i.sport === sp && i.team === team.name && i.status !== 'playing').map(i => ({ p: i.player, s: i.status, by: i.by }));   // headline flags, kept so score-picks.js can check them
+Sim.applyLive(window.LIVE_DATA);
+
+const FILE = path.join(__dirname, 'picks-log.json');
+const SIMS = 2000, SD = { nba: 12.0, nfl: 13.2, ncaaf: 16, ncaab: 11 };
+const norm = x => String(x).toLowerCase().replace(/[^a-z]/g, '');
+const imp = ml => ml < 0 ? -ml / (-ml + 100) : 100 / (ml + 100);
+const cdf = z => 0.5 * (1 + Math.sign(z) * Math.sqrt(1 - Math.exp(-4 * (z / Math.SQRT2) ** 2 / Math.PI)));   // standard normal CDF (erf approximation)
+
+function findTeam(sp, side) {
+  const T = Sim.SPORTS[sp].teams;
+  return (side.id && T.find(t => t.eid === side.id)) || T.find(t => norm(t.name) === norm(side.name)) || T.find(t => t.id === side.abbr);
+}
+function market(sp, g) {
+  const m = { line: g.line || null, total: g.total || null, pHome: null, margin: null };
+  if (g.homeML != null && g.awayML != null) { const ph = imp(g.homeML), pa = imp(g.awayML); m.pHome = ph / (ph + pa); }
+  const r = g.line && /^(\S+)\s+([+-]?\d+(?:\.\d+)?)$/.exec(g.line);
+  if (r) {
+    // the line can spell a team differently from the schedule (NHL "UTAH" vs "UTA"), so match on a shared prefix and rule out the away team first
+    const fav = r[1], v = parseFloat(r[2]), same = (x, y) => x === y || x.startsWith(y) || y.startsWith(x), isHome = g.homeFav != null ? (g.homeFav ? v <= 0 : v > 0) : fav !== g.away.abbr && same(fav, g.home.abbr);
+    if (Math.abs(v) >= 100) { if (m.pHome == null) { const p = imp(v) / 1.045; m.pHome = isHome ? p : 1 - p; } }   // single-sided moneyline: remove a typical ~4.5% overround
+    else { m.margin = isHome ? -v : v; if (m.pHome == null && SD[sp]) m.pHome = cdf(m.margin / SD[sp]); }
+  }
+  return m;
+}
+// sim weight in the sim/market blend, the same numbers index.html uses for best picks (nfl backtests: best weight 0% in 2024, 25% in 2025;
+// college football 30% and 45%, college basketball 10% and 15%)
+try { require('./blend-weights.js'); } catch (e) { /* optional */ }   // fit-blend.js: fitted weights once a sport has enough scored games
+const BLEND = Object.assign({ nba: 0.15, nfl: 0.15, nhl: 0.15, ncaaf: 0.3, ncaab: 0.1 }, (window.BLEND_FIT && window.BLEND_FIT.apply) || {});
+const dump = o => '{\n' + Object.keys(o).map(k => JSON.stringify(k) + ':' + JSON.stringify(o[k])).join(',\n') + '\n}\n';   // one game per line: small file, readable diffs
+// every refresh that sees a different market appends a snapshot, so we keep opening-to-closing line movement for free
+function lineHistory(prev, mk) {
+  const h = (prev && prev.lines) || [], last = h[h.length - 1], now = { t: new Date().toISOString(), pHome: mk.pHome != null ? +mk.pHome.toFixed(4) : null, margin: mk.margin, total: mk.total };
+  if (!last || last.pHome !== now.pHome || last.margin !== now.margin || last.total !== now.total) h.push(now);
+  return h.slice(-40);
+}
+function stretch(sp) { const b = window.BACKTEST && window.BACKTEST.leagues && window.BACKTEST.leagues[sp]; return (b && b.stretch) || 1; }
+
+const log = fs.existsSync(FILE) ? JSON.parse(fs.readFileSync(FILE, 'utf8')) : {};
+const rng = Sim.makeRng((Date.now() & 0xffffffff) >>> 0);
+let added = 0, updated = 0;
+for (const sp of ['nba', 'nfl', 'nhl', 'ncaaf', 'ncaab']) {
+  const col = !!Sim.SPORTS[sp].college;   // college: hundreds of games a week, so each entry is kept small (two flagged players a side, no travel, shorter line history)
+  const sched = (window.LIVE_DATA.schedule && window.LIVE_DATA.schedule[sp]) || [];
+  const a = stretch(sp);
+  for (const g of sched) {
+    if (new Date(g.date).getTime() <= Date.now()) continue;           // already started
+    const away = findTeam(sp, g.away), home = findTeam(sp, g.home);
+    if (!away || !home) continue;
+    if (sp === 'nhl') [[away, g.away], [home, g.home]].forEach(([t, s]) => {
+      const R = Sim.roster('nhl', t); t.gIdx = -1; if (!R.goalies) return;
+      const c = Sim.matchGoalie(R.goalies, s.confirmed); if (c >= 0) { t.gIdx = c; return; }
+      if (s.probable) { const i = R.goalies.findIndex(x => x.name === s.probable); if (i >= 0) t.gIdx = i; }
+    });
+    const m = Sim.monteCarlo(sp, away, home, SIMS, rng, { rest: { away: g.awayRest, home: g.homeRest }, weather: g.weather, neutral: !!(g.venue && g.venue.neutral) });
+    const raw = (m.wins[1] + m.wins[2] / 2) / m.n;
+    const z = Math.log(Math.min(0.999, Math.max(0.001, raw)) / (1 - Math.min(0.999, Math.max(0.001, raw))));
+    const mk = market(sp, g), key = sp + ':' + g.id;
+    const prev = log[key];
+    log[key] = {
+      key, league: sp, gameId: g.id, start: g.date, away: { abbr: g.away.abbr, name: g.away.name }, home: { abbr: g.home.abbr, name: g.home.name },
+      goalies: sp === 'nhl' ? [g.away.confirmed || g.away.probable, g.home.confirmed || g.home.probable] : undefined, goalieConfirmed: sp === 'nhl' ? [!!g.away.confirmed, !!g.home.confirmed] : undefined, rest: [g.awayRest, g.homeRest],
+      espnPHome: g.espnP != null ? g.espnP : undefined,   // ESPN BPI/FPI, logged so it can be scored against results later
+      simPHome: +(1 / (1 + Math.exp(-a * z))).toFixed(4), rawPHome: +raw.toFixed(4), simMargin: +(m.avg[1] - m.avg[0]).toFixed(2), simScore: [+m.avg[0].toFixed(2), +m.avg[1].toFixed(2)], simTotal: +m.avgTotal.toFixed(2),
+      blendPHome: BLEND[sp] != null && mk.pHome != null ? +(BLEND[sp] * (1 / (1 + Math.exp(-a * z))) + (1 - BLEND[sp]) * mk.pHome).toFixed(4) : undefined,
+      inj: col ? [Sim.injuries(sp, away, 2), Sim.injuries(sp, home, 2)].map(l => l.map(p => ({ name: p.name, status: p.status }))) : [Sim.injuries(sp, away), Sim.injuries(sp, home)],
+      news: (n => n[0].length || n[1].length ? n : undefined)([newsFor(sp, away), newsFor(sp, home)]),
+      lines: col ? lineHistory(prev, mk).slice(-8) : lineHistory(prev, mk),
+      travel: col ? undefined : [[g.awayFrom, g.home.abbr], [g.homeFrom, g.home.abbr]].map(([f, to]) => f && f !== to ? { from: f, miles: Math.round(Travel.miles(sp, f, to) || 0), tz: Travel.tzShift(sp, f, to) } : null),
+      mkt: mk, loggedAt: new Date().toISOString(), result: prev ? prev.result : null,
+    };
+    prev ? updated++ : added++;
+  }
+}
+fs.writeFileSync(FILE, dump(log));
+console.log('picks logged: ' + added + ' new, ' + updated + ' refreshed, ' + Object.keys(log).length + ' total');

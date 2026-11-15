@@ -13,6 +13,7 @@ Claude runs the loop; the simulator, picks log, track record and news are its to
 | `get_news` | Injury/availability headlines |
 | `list_teams` | Resolve team names |
 | `get_weekly_report` | Latest drift/health report |
+| `refresh_data` | Re-runs the data pipeline (ratings, schedules, injuries, news, picks, scoring) in a scratch copy and only replaces `engine/` data if it succeeds and passes `check.js --ci`. Needs internet access to ESPN and Google News. |
 
 ## Run
 
