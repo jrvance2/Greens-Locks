@@ -38,7 +38,11 @@ h2{margin:0 0 10px;font-size:18px}
 #info{margin:10px 0;color:var(--mute);font-size:16px}
 #err{color:#b3261e;font-weight:600;min-height:1.4em}
 #dl{font:inherit;font-size:20px;font-weight:700;width:100%;padding:14px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);cursor:pointer}
-#dl:disabled{opacity:.4;cursor:not-allowed}
+#dl:disabled,#dl3:disabled{opacity:.4;cursor:not-allowed}
+#dl3{margin-top:8px}
+#dl3.alt{font:inherit;font-size:16px;width:100%;padding:10px;border:2px solid var(--accent);border-radius:10px;background:transparent;color:var(--ink);cursor:pointer}
+#warn{color:#8a5a00;font-weight:600;margin:6px 0}
+@media (prefers-color-scheme:dark){#warn{color:#f0b64d}}
 .hint{color:var(--mute);font-size:14px;margin-top:8px}
 </style>
 </head>
@@ -61,8 +65,10 @@ h2{margin:0 0 10px;font-size:18px}
     <div class="hint">Drag to turn it. Scroll or pinch to zoom. Double-click to reset the view.</div>
     <div id="info"></div>
     <div id="err" role="alert"></div>
+    <div id="warn" role="status"></div>
     <button id="dl">Download STL file</button>
-    <div class="hint">Sizes are in millimetres (25.4 mm = 1 inch). The model is saved sitting flat on the bed, ready to open in your slicer.</div>
+    <button id="dl3" class="alt">Download 3MF file (Bambu Studio)</button>
+    <div class="hint">Sizes are in millimetres (25.4 mm = 1 inch). The model is saved sitting flat on the bed, ready to open in your slicer. STL works in every slicer. 3MF is Bambu Studio's own format.</div>
   </section>
 </main>
 <script>
@@ -381,11 +387,55 @@ function rebuild(){
     const vol = solids.reduce((a,s)=>a+volume(s),0);
     document.getElementById("info").innerHTML =
       `Size: <b>${bounds.map(n=>n.toFixed(1)).join(" × ")} mm</b> (${(bounds[0]/25.4).toFixed(2)} × ${(bounds[1]/25.4).toFixed(2)} × ${(bounds[2]/25.4).toFixed(2)} in)<br>Material volume: ${(vol/1000).toFixed(1)} cm³ · ${allTris.length} triangles`;
+    const big = bounds.some(n => n > BED);
+    document.getElementById("warn").textContent = big ? `This is bigger than a ${BED} mm print bed (Bambu P1S / P2S). Make it smaller, or it won't fit.` : "";
   } catch(e){
     solids=[]; allTris=[]; bounds=null; err.textContent = e.message; dl.disabled = true;
-    document.getElementById("info").textContent = "";
+    document.getElementById("info").textContent = ""; document.getElementById("warn").textContent = "";
   }
+  document.getElementById("dl3").disabled = dl.disabled;
   draw();
+}
+const BED = 256;                                   // Bambu Lab P1S / P2S build volume, mm
+
+/* 3MF = a zip holding one XML model. Written by hand (no compression), no libraries. */
+function crc32(u8){
+  let c, crc = -1;
+  if (!crc32.t){ crc32.t = new Uint32Array(256); for (let n=0;n<256;n++){ c=n; for (let k=0;k<8;k++) c = c&1 ? 0xEDB88320^(c>>>1) : c>>>1; crc32.t[n]=c>>>0; } }
+  for (let i=0;i<u8.length;i++) crc = crc32.t[(crc^u8[i])&255]^(crc>>>8);
+  return (crc^-1)>>>0;
+}
+function zipStore(files){                          // files: [[name, Uint8Array]]
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  for (const [name, data] of files){
+    const nm = enc.encode(name), crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30)); lh.setUint32(0,0x04034b50,true); lh.setUint16(4,20,true); lh.setUint16(10,0,true); lh.setUint16(12,33,true);
+    lh.setUint32(14,crc,true); lh.setUint32(18,data.length,true); lh.setUint32(22,data.length,true); lh.setUint16(26,nm.length,true);
+    parts.push(new Uint8Array(lh.buffer), nm, data);
+    const ch = new DataView(new ArrayBuffer(46)); ch.setUint32(0,0x02014b50,true); ch.setUint16(4,20,true); ch.setUint16(6,20,true); ch.setUint16(14,33,true);
+    ch.setUint32(16,crc,true); ch.setUint32(20,data.length,true); ch.setUint32(24,data.length,true); ch.setUint16(28,nm.length,true); ch.setUint32(42,off,true);
+    central.push(new Uint8Array(ch.buffer), nm);
+    off += 30 + nm.length + data.length;
+  }
+  const cdSize = central.reduce((a,b)=>a+b.length,0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0,0x06054b50,true); end.setUint16(8,files.length,true); end.setUint16(10,files.length,true); end.setUint32(12,cdSize,true); end.setUint32(16,off,true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], {type:"model/3mf"});
+}
+function to3MF(tris){
+  const idx = new Map(), verts = [], tri = [];
+  for (const t of tris){
+    const ids = t.map(v => { const k = v.map(c=>c.toFixed(4)).join(","); let i = idx.get(k); if (i===undefined){ i = verts.length; idx.set(k,i); verts.push(v); } return i; });
+    if (ids[0]!==ids[1] && ids[1]!==ids[2] && ids[0]!==ids[2]) tri.push(ids);
+  }
+  const f = n => (+n.toFixed(4)).toString();
+  const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>' +
+    verts.map(v=>`<vertex x="${f(v[0])}" y="${f(v[1])}" z="${f(v[2])}"/>`).join("") + '</vertices><triangles>' +
+    tri.map(t=>`<triangle v1="${t[0]}" v2="${t[1]}" v3="${t[2]}"/>`).join("") + '</triangles></mesh></object></resources><build><item objectid="1"/></build></model>';
+  const enc = new TextEncoder();
+  return zipStore([
+    ["[Content_Types].xml", enc.encode('<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')],
+    ["_rels/.rels", enc.encode('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')],
+    ["3D/3dmodel.model", enc.encode(xml)]]);
 }
 
 function toSTL(tris){
@@ -401,10 +451,10 @@ function toSTL(tris){
   }
   return buf;
 }
-function download(){
+function download(fmt){
   if (!allTris.length) return;
-  const name = current.id + "_" + bounds.map(n=>Math.round(n)).join("x") + "mm.stl";
-  const url = URL.createObjectURL(new Blob([toSTL(allTris)], {type:"model/stl"}));
+  const name = current.id + "_" + bounds.map(n=>Math.round(n)).join("x") + "mm." + fmt;
+  const url = URL.createObjectURL(fmt==="3mf" ? to3MF(allTris) : new Blob([toSTL(allTris)], {type:"model/stl"}));
   const a = document.createElement("a"); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 2000);
 }
@@ -454,7 +504,8 @@ function loadFile(sh, kind, file, note){
   const fail = () => { note.textContent = "Sorry, that file could not be read."; };
   if (kind==="image"){
     const url = URL.createObjectURL(file), img = new Image();
-    img.onload = () => done({img, w:img.naturalWidth, h:img.naturalHeight}); img.onerror = fail; img.src = url;
+    img.onload = () => done({img, w:img.naturalWidth||300, h:img.naturalHeight||300});   /* SVG logos may report no size */
+    img.onerror = fail; img.src = url;
   } else {
     const r = new FileReader();
     r.onload = () => { try { const tris = parseSTL(r.result); if (!tris.length) return fail(); done({tris}); } catch(e){ fail(); } };
@@ -478,7 +529,8 @@ for (const sh of SHAPES){
   padCanvas.addEventListener("pointermove", e=>{ if(!last) return; const p=pt(e); stroke(last,p); last=p; soon(); });
   padCanvas.addEventListener("pointerup", ()=>{ last=null; if (current.id==="draw") rebuild(); });
 }
-document.getElementById("dl").onclick = download;
+document.getElementById("dl").onclick = () => download("stl");
+document.getElementById("dl3").onclick = () => download("3mf");
 
 /* ---------- preview (no libraries) ---------- */
 const cv = document.getElementById("view"), cx = cv.getContext("2d");
