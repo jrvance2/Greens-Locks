@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>STL Maker</title>
+<style>
+:root{--bg:#f6f4ef;--card:#fff;--ink:#222;--mute:#6b6b6b;--accent:#2f6f5e;--accent-ink:#fff;--line:#ddd8cc;--field:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1d1c;--card:#272928;--ink:#eee;--mute:#a0a0a0;--accent:#5bb89f;--accent-ink:#0d1a16;--line:#3a3d3b;--field:#1f2120}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:16px 20px;border-bottom:1px solid var(--line)}
+header h1{margin:0;font-size:26px}
+header p{margin:4px 0 0;color:var(--mute);font-size:16px}
+main{display:grid;grid-template-columns:minmax(300px,380px) 1fr;gap:16px;padding:16px;max-width:1200px;margin:0 auto}
+@media (max-width:760px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+h2{margin:0 0 10px;font-size:18px}
+#shapes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#shapes button{font:inherit;padding:10px 8px;border:2px solid var(--line);background:var(--field);color:var(--ink);border-radius:10px;cursor:pointer}
+#shapes button[aria-pressed=true]{border-color:var(--accent);background:var(--accent);color:var(--accent-ink);font-weight:600}
+#desc{color:var(--mute);font-size:15px;margin:10px 0 0}
+.field{display:grid;grid-template-columns:1fr 110px;gap:8px;align-items:center;margin:8px 0}
+.field label{font-size:16px}
+.field input[type=number]{font:inherit;width:100%;padding:8px;border:2px solid var(--line);border-radius:8px;background:var(--field);color:var(--ink)}
+.field input[type=checkbox]{width:26px;height:26px;justify-self:end}
+.unit{color:var(--mute);font-size:13px}
+.field>div{display:flex;align-items:center;gap:6px}
+#view{width:100%;aspect-ratio:4/3;background:var(--field);border:1px solid var(--line);border-radius:10px;touch-action:none;cursor:grab;display:block}
+#view:active{cursor:grabbing}
+#info{margin:10px 0;color:var(--mute);font-size:16px}
+#err{color:#b3261e;font-weight:600;min-height:1.4em}
+#dl{font:inherit;font-size:20px;font-weight:700;width:100%;padding:14px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);cursor:pointer}
+#dl:disabled{opacity:.4;cursor:not-allowed}
+.hint{color:var(--mute);font-size:14px;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>STL Maker</h1>
+  <p>Pick a shape, type in the sizes you want (in millimetres), then download your STL file. Works offline.</p>
+</header>
+<main>
+  <section class="card">
+    <h2>1. Pick a shape</h2>
+    <div id="shapes"></div>
+    <p id="desc"></p>
+    <h2 style="margin-top:18px">2. Set the sizes</h2>
+    <div id="params"></div>
+  </section>
+  <section class="card">
+    <h2>3. Check it, then download</h2>
+    <canvas id="view" width="800" height="600" aria-label="3D preview"></canvas>
+    <div class="hint">Drag to turn it. Scroll or pinch to zoom. Double-click to reset the view.</div>
+    <div id="info"></div>
+    <div id="err" role="alert"></div>
+    <button id="dl">Download STL file</button>
+    <div class="hint">Sizes are in millimetres (25.4 mm = 1 inch). The model is saved sitting flat on the bed, ready to open in your slicer.</div>
+  </section>
+</main>
+<script>
+"use strict";
+/* ---------- geometry helpers (units: mm, Z is up) ---------- */
+function extrude(poly, z0, z1, map){            // convex polygon -> prism
+  let area = 0;
+  for (let i = 0; i < poly.length; i++){ const j=(i+1)%poly.length; area += poly[i][0]*poly[j][1]-poly[j][0]*poly[i][1]; }
+  if (area < 0) poly = poly.slice().reverse();
+  const n = poly.length, t = [];
+  const P = (i,z) => map([poly[i][0], poly[i][1], z]);
+  for (let i=1;i<n-1;i++){ t.push([P(0,z1),P(i,z1),P(i+1,z1)]); t.push([P(0,z0),P(i+1,z0),P(i,z0)]); }
+  for (let i=0;i<n;i++){ const j=(i+1)%n; t.push([P(i,z0),P(j,z0),P(j,z1)]); t.push([P(i,z0),P(j,z1),P(i,z1)]); }
+  return t;
+}
+const ident = p => p;
+const box = (x0,y0,z0,x1,y1,z1) => extrude([[x0,y0],[x1,y0],[x1,y1],[x0,y1]], z0, z1, ident);
+
+function revolve(profile, seg){                  // [[r,z],...] closed loop around Z axis
+  const n = profile.length, t = [];
+  const pt = (i,s) => { const a = 2*Math.PI*(s%seg)/seg; return [profile[i][0]*Math.cos(a), profile[i][0]*Math.sin(a), profile[i][1]]; };
+  for (let i=0;i<n;i++){ const j=(i+1)%n;
+    for (let s=0;s<seg;s++){
+      const a=pt(i,s), b=pt(i,s+1), c=pt(j,s+1), d=pt(j,s);
+      t.push([a,b,c],[a,c,d]);
+    } }
+  return t.filter(tr => {
+    const u=sub(tr[1],tr[0]), v=sub(tr[2],tr[0]), c=cross(u,v);
+    return c[0]*c[0]+c[1]*c[1]+c[2]*c[2] > 1e-12;
+  });
+}
+function sub(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
+function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function dot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+function volume(tris){ let v=0; for (const t of tris) v += dot(t[0], cross(t[1],t[2]))/6; return v; }
+function orient(tris){ return volume(tris) < 0 ? tris.map(t => [t[0],t[2],t[1]]) : tris; }  // make normals point outward
+function need(cond, msg){ if (!cond) throw new Error(msg); }
+
+/* ---------- shapes ---------- */
+const SHAPES = [
+{ id:"box", name:"Box / Tray",
+  desc:"An open box. Add dividers to make a drawer organizer or a sorting tray. Turn off \"hollow\" for a solid block.",
+  params:[
+    {k:"w",label:"Width",v:80,min:10,unit:"mm"},{k:"d",label:"Depth",v:60,min:10,unit:"mm"},{k:"h",label:"Height",v:30,min:3,unit:"mm"},
+    {k:"wall",label:"Wall thickness",v:2,min:0.8,unit:"mm",step:0.1},{k:"floor",label:"Floor thickness",v:2,min:0.8,unit:"mm",step:0.1},
+    {k:"nx",label:"Dividers across the width",v:0,min:0,max:10,unit:"#",step:1},{k:"ny",label:"Dividers across the depth",v:0,min:0,max:10,unit:"#",step:1},
+    {k:"hollow",label:"Hollow (open top)",v:true,type:"bool"}],
+  build(p){
+    if (!p.hollow) return [box(0,0,0,p.w,p.d,p.h)];
+    need(p.wall*2 < p.w && p.wall*2 < p.d, "Walls are too thick for this size.");
+    need(p.floor < p.h, "Floor is taller than the box.");
+    const s = [box(0,0,0,p.w,p.d,p.floor)], w=p.wall, f=p.floor;
+    s.push(box(0,0,f,p.w,w,p.h), box(0,p.d-w,f,p.w,p.d,p.h), box(0,w,f,w,p.d-w,p.h), box(p.w-w,w,f,p.w,p.d-w,p.h));
+    const iw=p.w-2*w, id=p.d-2*w;
+    for (let i=1;i<=p.nx;i++){ const x=w+iw*i/(p.nx+1); need(iw/(p.nx+1)>w*2,"Too many dividers for this width."); s.push(box(x-w/2,w,f,x+w/2,p.d-w,p.h)); }
+    for (let i=1;i<=p.ny;i++){ const y=w+id*i/(p.ny+1); need(id/(p.ny+1)>w*2,"Too many dividers for this depth."); s.push(box(w,y-w/2,f,p.w-w,y+w/2,p.h)); }
+    return s;
+  }},
+{ id:"lid", name:"Lid for the Box",
+  desc:"A lid that fits the Box above. Use the same width, depth and wall thickness you used for the box. Raise the clearance if it fits too tightly.",
+  params:[
+    {k:"w",label:"Box width",v:80,min:10,unit:"mm"},{k:"d",label:"Box depth",v:60,min:10,unit:"mm"},
+    {k:"wall",label:"Box wall thickness",v:2,min:0.8,unit:"mm",step:0.1},
+    {k:"top",label:"Lid thickness",v:2,min:0.8,unit:"mm",step:0.1},{k:"lip",label:"Lip height",v:4,min:1,unit:"mm",step:0.5},
+    {k:"tol",label:"Clearance (looseness)",v:0.3,min:0,max:2,unit:"mm",step:0.05}],
+  build(p){
+    const o = p.wall + p.tol, lt = 1.6;
+    need(o*2 + lt*2 < p.w && o*2 + lt*2 < p.d, "Lid is too small for those walls.");
+    const x0=o,x1=p.w-o,y0=o,y1=p.d-o, z0=p.top, z1=p.top+p.lip;
+    return [box(0,0,0,p.w,p.d,p.top),
+      box(x0,y0,z0,x1,y0+lt,z1), box(x0,y1-lt,z0,x1,y1,z1), box(x0,y0+lt,z0,x0+lt,y1-lt,z1), box(x1-lt,y0+lt,z0,x1,y1-lt,z1)];
+  }},
+{ id:"cup", name:"Cup / Vase / Pen holder",
+  desc:"Round cups, vases and pen holders. Make the top wider or narrower than the bottom, add a wavy bulge, or set sides to 6 for a hexagon. Turn off \"hollow\" for a solid cylinder or cone.",
+  params:[
+    {k:"rb",label:"Bottom radius",v:30,min:3,unit:"mm"},{k:"rt",label:"Top radius",v:35,min:1,unit:"mm"},{k:"h",label:"Height",v:90,min:5,unit:"mm"},
+    {k:"wall",label:"Wall thickness",v:2,min:0.8,unit:"mm",step:0.1},{k:"floor",label:"Bottom thickness",v:3,min:0.8,unit:"mm",step:0.1},
+    {k:"bulge",label:"Bulge (0 = straight)",v:0,min:-40,max:60,unit:"%",step:1},{k:"waves",label:"Number of bulges",v:1,min:1,max:8,unit:"#",step:1},
+    {k:"sides",label:"Sides (60 = round)",v:60,min:3,max:120,unit:"#",step:1},
+    {k:"hollow",label:"Hollow",v:true,type:"bool"}],
+  build(p){
+    const N=40, ro = z => (p.rb+(p.rt-p.rb)*z/p.h) * (1+p.bulge/100*Math.sin(Math.PI*p.waves*z/p.h));
+    const pr = [[0,0]];
+    for (let k=0;k<=N;k++){ const z=p.h*k/N; pr.push([Math.max(ro(z),0.5), z]); }
+    if (!p.hollow){ pr.push([0,p.h]); return [revolve(pr,p.sides)]; }
+    need(p.floor < p.h, "Bottom is taller than the cup.");
+    for (let k=N;k>=0;k--){ const z=p.floor+(p.h-p.floor)*k/N, r=ro(z)-p.wall; need(r>0.5,"Walls are too thick for this size."); pr.push([r,z]); }
+    pr.push([0,p.floor]);
+    return [revolve(pr,p.sides)];
+  }},
+{ id:"ring", name:"Ring / Washer / Tube",
+  desc:"A flat washer, a ring, or a long tube, depending on the height.",
+  params:[
+    {k:"ro",label:"Outside radius",v:20,min:2,unit:"mm"},{k:"ri",label:"Hole radius",v:10,min:0.5,unit:"mm"},{k:"h",label:"Height",v:5,min:0.5,unit:"mm"},
+    {k:"sides",label:"Sides (60 = round)",v:60,min:3,max:120,unit:"#",step:1}],
+  build(p){ need(p.ri < p.ro-0.5,"The hole must be smaller than the outside."); return [revolve([[p.ri,0],[p.ro,0],[p.ro,p.h],[p.ri,p.h]], p.sides)]; }},
+{ id:"ball", name:"Ball / Dome",
+  desc:"A full ball or a half ball (dome) with a flat bottom. Lower the height % to squash it.",
+  params:[
+    {k:"r",label:"Radius",v:25,min:2,unit:"mm"},{k:"squash",label:"Height (100 = normal)",v:100,min:20,max:200,unit:"%",step:5},
+    {k:"dome",label:"Half ball (flat bottom)",v:true,type:"bool"},{k:"sides",label:"Sides",v:60,min:6,max:120,unit:"#",step:1}],
+  build(p){
+    const pr=[], M=30, k=p.squash/100;
+    if (p.dome){ pr.push([0,0]); for (let i=0;i<=M;i++){ const a=Math.PI/2*i/M; pr.push([p.r*Math.cos(a), p.r*k*Math.sin(a)]); } }
+    else { for (let i=0;i<=M*2;i++){ const a=Math.PI*i/(M*2); pr.push([p.r*Math.sin(a), p.r*k*(1-Math.cos(a))]); } }
+    return [revolve(pr,p.sides)];
+  }},
+{ id:"stand", name:"Phone / Tablet stand",
+  desc:"A simple stand with a lip at the front. Set the slot to a little more than the thickness of the phone, with its case.",
+  params:[
+    {k:"w",label:"Width",v:70,min:20,unit:"mm"},{k:"slot",label:"Slot for the device",v:14,min:4,unit:"mm"},
+    {k:"angle",label:"Back angle from flat",v:65,min:30,max:85,unit:"deg",step:1},{k:"back",label:"Back height (along slope)",v:90,min:20,unit:"mm"},
+    {k:"t",label:"Thickness",v:4,min:2,unit:"mm",step:0.5},{k:"lip",label:"Front lip height",v:15,min:4,unit:"mm"}],
+  build(p){
+    const a=p.angle*Math.PI/180, ht=p.t/Math.sin(a), s=p.t+p.slot;
+    const dx=p.back*Math.cos(a), dz=p.back*Math.sin(a), L=s+ht+dx+10;
+    const m = q => [q[0], q[2], q[1]];                 // profile (x,z) extruded along Y
+    return [extrude([[0,0],[L,0],[L,p.t],[0,p.t]],0,p.w,m),
+            extrude([[0,0],[p.t,0],[p.t,p.lip],[0,p.lip]],0,p.w,m),
+            extrude([[s,0],[s+ht,0],[s+ht+dx,dz],[s+dx,dz]],0,p.w,m)];
+  }}
+];
+
+/* ---------- build + STL ---------- */
+let current = SHAPES[0], values = {}, solids = [], allTris = [], bounds = null;
+
+function rebuild(){
+  const err = document.getElementById("err"), dl = document.getElementById("dl");
+  err.textContent = ""; dl.disabled = false;
+  try {
+    const p = {}; for (const f of current.params) p[f.k] = values[f.k];
+    solids = current.build(p).map(orient);
+    // sit on bed, centered
+    let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
+    for (const s of solids) for (const t of s) for (const v of t) for (let i=0;i<3;i++){ mn[i]=Math.min(mn[i],v[i]); mx[i]=Math.max(mx[i],v[i]); }
+    const off=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,mn[2]];
+    solids = solids.map(s => s.map(t => t.map(v => [v[0]-off[0],v[1]-off[1],v[2]-off[2]])));
+    allTris = solids.flat();
+    bounds = [mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2]];
+    const vol = solids.reduce((a,s)=>a+volume(s),0);
+    document.getElementById("info").innerHTML =
+      `Size: <b>${bounds.map(n=>n.toFixed(1)).join(" × ")} mm</b> (${(bounds[0]/25.4).toFixed(2)} × ${(bounds[1]/25.4).toFixed(2)} × ${(bounds[2]/25.4).toFixed(2)} in)<br>Material volume: ${(vol/1000).toFixed(1)} cm³ · ${allTris.length} triangles`;
+  } catch(e){
+    solids=[]; allTris=[]; bounds=null; err.textContent = e.message; dl.disabled = true;
+    document.getElementById("info").textContent = "";
+  }
+  draw();
+}
+
+function toSTL(tris){
+  const buf = new ArrayBuffer(84 + tris.length*50), dv = new DataView(buf);
+  const hdr = "STL Maker"; for (let i=0;i<hdr.length;i++) dv.setUint8(i, hdr.charCodeAt(i));
+  dv.setUint32(80, tris.length, true);
+  let o = 84;
+  for (const t of tris){
+    let n = cross(sub(t[1],t[0]), sub(t[2],t[0])); const l = Math.hypot(n[0],n[1],n[2]) || 1; n = n.map(c=>c/l);
+    for (const c of n){ dv.setFloat32(o,c,true); o+=4; }
+    for (const v of t) for (const c of v){ dv.setFloat32(o,c,true); o+=4; }
+    dv.setUint16(o,0,true); o+=2;
+  }
+  return buf;
+}
+function download(){
+  if (!allTris.length) return;
+  const name = current.id + "_" + bounds.map(n=>Math.round(n)).join("x") + "mm.stl";
+  const url = URL.createObjectURL(new Blob([toSTL(allTris)], {type:"model/stl"}));
+  const a = document.createElement("a"); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+
+/* ---------- UI ---------- */
+function pickShape(sh){
+  current = sh; values = {};
+  for (const f of sh.params) values[f.k] = f.v;
+  document.querySelectorAll("#shapes button").forEach(b => b.setAttribute("aria-pressed", b.dataset.id===sh.id));
+  document.getElementById("desc").textContent = sh.desc;
+  const box = document.getElementById("params"); box.innerHTML = "";
+  for (const f of sh.params){
+    const row = document.createElement("div"); row.className = "field";
+    const lab = document.createElement("label"); lab.textContent = f.label; lab.htmlFor = "f_"+f.k;
+    const inp = document.createElement("input"); inp.id = "f_"+f.k;
+    if (f.type==="bool"){ inp.type="checkbox"; inp.checked=f.v; inp.onchange=()=>{values[f.k]=inp.checked; rebuild();}; row.append(lab,inp); }
+    else {
+      inp.type="number"; inp.value=f.v; inp.min=f.min; if (f.max!=null) inp.max=f.max; inp.step=f.step||1; inp.inputMode="decimal";
+      inp.oninput=()=>{ const n=parseFloat(inp.value); if (isNaN(n)) return; values[f.k]=Math.min(f.max!=null?f.max:1e4, Math.max(f.min,n)); rebuild(); };
+      inp.onblur=()=>{ inp.value=values[f.k]; };
+      const wrap=document.createElement("div"); wrap.append(inp); const u=document.createElement("span"); u.className="unit"; u.textContent=" "+f.unit;
+      row.append(lab,wrap); wrap.append(u);
+    }
+    box.append(row);
+  }
+  resetView(); rebuild();
+}
+const shapesEl = document.getElementById("shapes");
+for (const sh of SHAPES){ const b=document.createElement("button"); b.textContent=sh.name; b.dataset.id=sh.id; b.onclick=()=>pickShape(sh); shapesEl.append(b); }
+document.getElementById("dl").onclick = download;
+
+/* ---------- preview (no libraries) ---------- */
+const cv = document.getElementById("view"), cx = cv.getContext("2d");
+let yaw=0.6, pitch=0.5, zoom=1;
+function resetView(){ yaw=0.6; pitch=0.5; zoom=1; draw(); }
+cv.addEventListener("dblclick", resetView);
+let drag=null;
+cv.addEventListener("pointerdown", e=>{ drag=[e.clientX,e.clientY]; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e=>{ if(!drag) return; yaw-=(e.clientX-drag[0])*0.01; pitch=Math.max(-1.5,Math.min(1.5,pitch+(e.clientY-drag[1])*0.01)); drag=[e.clientX,e.clientY]; draw(); });
+cv.addEventListener("pointerup", ()=>drag=null);
+cv.addEventListener("wheel", e=>{ e.preventDefault(); zoom=Math.max(0.3,Math.min(5,zoom*(e.deltaY<0?1.1:0.9))); draw(); }, {passive:false});
+function css(n){ return getComputedStyle(document.documentElement).getPropertyValue(n); }
+function draw(){
+  const W=cv.width, H=cv.height;
+  cx.clearRect(0,0,W,H);
+  if (!allTris.length) return;
+  const cy=Math.cos(yaw), sy=Math.sin(yaw), cp=Math.cos(pitch), sp=Math.sin(pitch);
+  const tr = v => { const x=v[0]*cy-v[1]*sy, y=v[0]*sy+v[1]*cy, z=v[2]-bounds[2]/2; return [x, y*cp-z*sp, y*sp+z*cp]; };
+  const size = Math.hypot(bounds[0],bounds[1],bounds[2]);
+  const sc = Math.min(W,H)*0.8/size*zoom;
+  const items = [];
+  for (const t of allTris){
+    const a=tr(t[0]), b=tr(t[1]), c=tr(t[2]);
+    const n = cross(sub(b,a), sub(c,a)); const l=Math.hypot(n[0],n[1],n[2]); if (l<1e-9) continue;
+    const ny = n[1]/l; if (ny > 0.02) continue;                 // facing away
+    const shade = 0.35 + 0.65*Math.max(0, (-n[0]*0.3 + n[2]*0.7 - n[1]*0.6)/l);
+    items.push({a,b,c,d:(a[1]+b[1]+c[1])/3,s:Math.min(1,shade)});
+  }
+  items.sort((p,q)=>q.d-p.d);
+  const acc = css("--accent").trim() || "#2f6f5e";
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(acc), rgb = m ? [parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)] : [47,111,94];
+  for (const it of items){
+    const col = `rgb(${rgb.map(c=>Math.round(c*it.s)).join(",")})`;
+    cx.beginPath();
+    cx.moveTo(W/2+it.a[0]*sc, H/2-it.a[2]*sc); cx.lineTo(W/2+it.b[0]*sc, H/2-it.b[2]*sc); cx.lineTo(W/2+it.c[0]*sc, H/2-it.c[2]*sc); cx.closePath();
+    cx.fillStyle=col; cx.strokeStyle=col; cx.lineWidth=0.7; cx.fill(); cx.stroke();
+  }
+}
+matchMedia("(prefers-color-scheme:dark)").addEventListener("change", draw);
+pickShape(SHAPES[0]);
+</script>
+</body>
+</html>
