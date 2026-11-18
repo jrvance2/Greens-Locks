@@ -26,6 +26,13 @@ h2{margin:0 0 10px;font-size:18px}
 .field input[type=checkbox]{width:26px;height:26px;justify-self:end}
 .unit{color:var(--mute);font-size:13px}
 .field>div{display:flex;align-items:center;gap:6px}
+.field.wide{grid-template-columns:1fr}
+.field select,.field input[type=text]{font:inherit;width:100%;padding:8px;border:2px solid var(--line);border-radius:8px;background:var(--field);color:var(--ink)}
+.field input[type=file]{font:inherit;font-size:15px;width:100%}
+.field button{font:inherit;padding:8px 12px;border:2px solid var(--line);border-radius:8px;background:var(--field);color:var(--ink);cursor:pointer}
+.grp{grid-column:1/-1;margin:8px 0 0;font-size:14px;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
+#pad{width:100%;aspect-ratio:4/3;background:#fff;border:2px solid var(--line);border-radius:8px;touch-action:none;cursor:crosshair;display:block}
+.note{font-size:14px;color:var(--mute);margin:2px 0}
 #view{width:100%;aspect-ratio:4/3;background:var(--field);border:1px solid var(--line);border-radius:10px;touch-action:none;cursor:grab;display:block}
 #view:active{cursor:grabbing}
 #info{margin:10px 0;color:var(--mute);font-size:16px}
@@ -179,6 +186,182 @@ const SHAPES = [
   }}
 ];
 
+/* ---------- "make from..." tools: picture, text, drawing, existing STL ---------- */
+// Height grid -> watertight solid. h[j*nx+i] is the height of cell (i,j); 0 = empty. Row 0 is the top of the picture.
+function gridMesh(h, nx, ny, c){
+  const t = [], H = (i,j) => (i<0||j<0||i>=nx||j>=ny) ? 0 : h[j*nx+i];
+  for (let j=0;j<ny;j++) for (let i=0;i<nx;i++){
+    const z = h[j*nx+i]; if (z<=0) continue;
+    const x0=i*c, x1=x0+c, y0=(ny-1-j)*c, y1=y0+c;
+    t.push([[x0,y0,z],[x1,y0,z],[x1,y1,z]],[[x0,y0,z],[x1,y1,z],[x0,y1,z]]);       // top
+    t.push([[x0,y0,0],[x1,y1,0],[x1,y0,0]],[[x0,y0,0],[x0,y1,0],[x1,y1,0]]);       // bottom
+    let n = H(i+1,j);  if (z>n){ const a=[x1,y0,n],b=[x1,y1,n],cc=[x1,y1,z],d=[x1,y0,z]; t.push([a,b,cc],[a,cc,d]); }
+    n = H(i-1,j);      if (z>n){ const a=[x0,y1,n],b=[x0,y0,n],cc=[x0,y0,z],d=[x0,y1,z]; t.push([a,b,cc],[a,cc,d]); }
+    n = H(i,j-1);      if (z>n){ const a=[x1,y1,n],b=[x0,y1,n],cc=[x0,y1,z],d=[x1,y1,z]; t.push([a,b,cc],[a,cc,d]); }
+    n = H(i,j+1);      if (z>n){ const a=[x0,y0,n],b=[x1,y0,n],cc=[x1,y0,z],d=[x0,y0,z]; t.push([a,b,cc],[a,cc,d]); }
+  }
+  return t;
+}
+// Smooth relief: one height per grid corner, flat bottom, closed sides.
+function reliefMesh(v, nx, ny, c, base, relief){
+  const W = nx+1, vz = new Float32Array(W*(ny+1));
+  for (let j=0;j<=ny;j++) for (let i=0;i<=nx;i++){
+    let s=0, n=0;
+    for (const [di,dj] of [[-1,-1],[0,-1],[-1,0],[0,0]]){ const a=i+di, b=j+dj; if (a>=0&&b>=0&&a<nx&&b<ny){ s+=v[b*nx+a]; n++; } }
+    vz[j*W+i] = base + relief*s/n;
+  }
+  const P = (i,j,z) => [i*c,(ny-j)*c,z], t = [];
+  for (let j=0;j<ny;j++) for (let i=0;i<nx;i++){
+    const bl=[i,j+1], br=[i+1,j+1], tr=[i+1,j], tl=[i,j], T=q=>P(q[0],q[1],vz[q[1]*W+q[0]]), B=q=>P(q[0],q[1],0);
+    t.push([T(bl),T(br),T(tr)],[T(bl),T(tr),T(tl)],[B(bl),B(tr),B(br)],[B(bl),B(tl),B(tr)]);
+  }
+  const wall = (p,q) => { const a=P(p[0],p[1],0), b=P(q[0],q[1],0), cc=P(q[0],q[1],vz[q[1]*W+q[0]]), d=P(p[0],p[1],vz[p[1]*W+p[0]]); t.push([a,b,cc],[a,cc,d]); };
+  for (let i=0;i<nx;i++) wall([i,ny],[i+1,ny]);
+  for (let j=ny;j>0;j--) wall([nx,j],[nx,j-1]);
+  for (let i=nx;i>0;i--) wall([i,0],[i-1,0]);
+  for (let j=0;j<ny;j++) wall([0,j],[0,j+1]);
+  return t;
+}
+function brightness(src, w, h){                    // draw anything onto white at w x h, return 0..1 brightness per cell
+  const cv2 = document.createElement("canvas"); cv2.width=w; cv2.height=h;
+  const g = cv2.getContext("2d", {willReadFrequently:true}); g.fillStyle="#fff"; g.fillRect(0,0,w,h);
+  g.imageSmoothingQuality="high"; g.drawImage(src,0,0,w,h);
+  const d = g.getImageData(0,0,w,h).data, out = new Float32Array(w*h);
+  for (let i=0;i<w*h;i++) out[i] = (0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2])/255;
+  return out;
+}
+const assets = {};                                 // loaded files, per tool
+const padCanvas = document.createElement("canvas"); padCanvas.id="pad"; padCanvas.width=320; padCanvas.height=240;
+{ const g = padCanvas.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,320,240); }
+
+function parseSTL(buf){
+  const dv = new DataView(buf), tris = [];
+  if (buf.byteLength >= 84 && 84 + 50*dv.getUint32(80,true) === buf.byteLength){
+    const n = dv.getUint32(80,true);
+    for (let i=0;i<n;i++){ const o=84+i*50+12, t=[];
+      for (let k=0;k<3;k++) t.push([dv.getFloat32(o+k*12,true),dv.getFloat32(o+k*12+4,true),dv.getFloat32(o+k*12+8,true)]);
+      tris.push(t); }
+  } else {
+    const txt = new TextDecoder().decode(buf), re = /vertex\s+(\S+)\s+(\S+)\s+(\S+)/g, v = []; let m;
+    while ((m = re.exec(txt))) v.push([+m[1],+m[2],+m[3]]);
+    for (let i=0;i+2<v.length;i+=3) tris.push([v[i],v[i+1],v[i+2]]);
+  }
+  return tris.filter(t => t.flat().every(Number.isFinite));
+}
+function rot(v, ax, deg){
+  const a=deg*Math.PI/180, c=Math.round(Math.cos(a)), s=Math.round(Math.sin(a));
+  if (ax===0) return [v[0], v[1]*c-v[2]*s, v[1]*s+v[2]*c];
+  if (ax===1) return [v[0]*c+v[2]*s, v[1], -v[0]*s+v[2]*c];
+  return [v[0]*c-v[1]*s, v[0]*s+v[1]*c, v[2]];
+}
+const ROT = [["0","Don't turn"],["90","Turn 90°"],["180","Turn 180°"],["270","Turn 270°"]];
+const FONTS = [["Arial, Helvetica, sans-serif","Plain (sans-serif)"],["Georgia, 'Times New Roman', serif","Classic (serif)"],
+               ["'Courier New', monospace","Typewriter"],["'Comic Sans MS', 'Segoe Print', cursive","Casual / handwriting"]];
+
+SHAPES.push(
+{ id:"image", group:"Make from…", name:"Picture / Photo",
+  desc:"Choose a picture (JPG, PNG, a logo, a drawing). Make a raised relief of it, or a flat cut-out of its dark or light parts, like a stamp, cookie-cutter base or silhouette.",
+  params:[
+    {k:"file",label:"Choose a picture",type:"file",kind:"image",accept:"image/*"},
+    {k:"mode",label:"What should it become?",type:"select",v:"relief_light",options:[
+      ["relief_light","Raised relief (brighter = taller)"],["relief_dark","Raised relief (darker = taller)"],
+      ["sil_dark","Flat shape from the DARK parts"],["sil_light","Flat shape from the LIGHT parts"]]},
+    {k:"size",label:"Longest side",v:80,min:10,unit:"mm"},
+    {k:"thick",label:"Thickness (back plate / flat shape)",v:2,min:0.4,unit:"mm",step:0.2},
+    {k:"relief",label:"Relief height (for raised relief)",v:3,min:0.2,unit:"mm",step:0.2},
+    {k:"thresh",label:"Dark / light cutoff (flat shapes)",v:50,min:5,max:95,unit:"%",step:5}],
+  build(p, A){
+    need(A && A.img, "Choose a picture first.");
+    const sc = Math.min(1, 140/Math.max(A.w,A.h)), nx = Math.max(2,Math.round(A.w*sc)), ny = Math.max(2,Math.round(A.h*sc));
+    const b = brightness(A.img, nx, ny), h = new Float32Array(nx*ny), cell = p.size/Math.max(nx,ny); let count=0;
+    if (p.mode==="relief_light" || p.mode==="relief_dark"){
+      if (p.mode==="relief_dark") for (let i=0;i<b.length;i++) b[i] = 1-b[i];
+      return [reliefMesh(b,nx,ny,cell,p.thick,p.relief)];
+    }
+    for (let i=0;i<h.length;i++){
+      const v = b[i];
+      if (p.mode==="sil_dark") h[i] = v < p.thresh/100 ? p.thick : 0;
+      else h[i] = v >= p.thresh/100 ? p.thick : 0;
+      if (h[i]>0) count++;
+    }
+    need(count>0, "Nothing is left to print. Try a different cutoff or mode.");
+    return [gridMesh(h,nx,ny,cell)];
+  }},
+{ id:"text", group:"Make from…", name:"Text / Name sign",
+  desc:"Type a name or a word. Make a name plate with raised letters, a keychain with a hole, or solid letters on their own. Great for door signs, labels and gifts.",
+  params:[
+    {k:"text",label:"Type your text",type:"text",v:"Mom"},
+    {k:"font",label:"Letter style",type:"select",v:FONTS[0][0],options:FONTS},
+    {k:"bold",label:"Bold",v:true,type:"bool"},
+    {k:"size",label:"Letter height",v:20,min:5,unit:"mm"},
+    {k:"plate",label:"Plate thickness (0 = letters only)",v:2,min:0,unit:"mm",step:0.2},
+    {k:"raise",label:"Letters stand up by",v:2,min:0.4,unit:"mm",step:0.2},
+    {k:"pad",label:"Space around letters",v:4,min:1,unit:"mm",step:0.5},
+    {k:"hole",label:"Keychain hole",v:false,type:"bool"},{k:"holeD",label:"Hole diameter",v:5,min:2,unit:"mm",step:0.5}],
+  build(p){
+    need(p.text.trim(), "Type some text first.");
+    const est = Math.max(p.size, p.text.length*p.size*0.7), c = Math.min(3.5, 190/est), fpx = Math.max(10, p.size*c*1.1);
+    const g0 = document.createElement("canvas").getContext("2d");
+    const font = `${p.bold?"bold ":""}${fpx}px ${p.font}`; g0.font = font;
+    const m = g0.measureText(p.text), asc = Math.ceil(m.actualBoundingBoxAscent), desc = Math.ceil(m.actualBoundingBoxDescent);
+    const left = Math.floor(m.actualBoundingBoxLeft), tw = Math.ceil(m.actualBoundingBoxRight)+left+2, th = asc+desc+2;
+    need(tw>2 && th>2, "That text has nothing to print.");
+    const cv2 = document.createElement("canvas"); cv2.width=tw; cv2.height=th;
+    const g = cv2.getContext("2d", {willReadFrequently:true}); g.fillStyle="#fff"; g.fillRect(0,0,tw,th);
+    g.fillStyle="#000"; g.font=font; g.textBaseline="alphabetic"; g.fillText(p.text, left+1, asc+1);
+    const d = g.getImageData(0,0,tw,th).data;
+    const plated = p.plate > 0, padC = plated ? Math.round(p.pad*c) : 0, hole = plated && p.hole;
+    const offX = padC + (hole ? Math.round((p.holeD+4)*c) : 0), gw = offX+tw+padC, gh = th+2*padC;
+    const h = new Float32Array(gw*gh);
+    if (plated) h.fill(p.plate);
+    let letters = 0;
+    for (let j=0;j<th;j++) for (let i=0;i<tw;i++) if (d[(j*tw+i)*4] < 128){ h[(j+padC)*gw+offX+i] = (plated?p.plate:0)+p.raise; letters++; }
+    need(letters>0, "That text has nothing to print.");
+    if (hole){
+      const rc = p.holeD/2*c, cxh = (2+p.holeD/2)*c + padC*0.3, cyh = gh/2;
+      need(p.holeD*c < gh-2*c*1.5, "The hole is too big for these letters. Make the letters taller or the space around them bigger.");
+      for (let j=0;j<gh;j++) for (let i=0;i<gw;i++) if (Math.hypot(i+0.5-cxh,j+0.5-cyh) < rc) h[j*gw+i]=0;
+    }
+    return [gridMesh(h,gw,gh,1/c)];
+  }},
+{ id:"draw", group:"Make from…", name:"Draw your own",
+  desc:"Draw a shape with your mouse or finger. Whatever you draw in black becomes solid plastic. Draw closed shapes, thick lines, hearts, stars, initials and so on.",
+  params:[
+    {k:"pad",label:"Draw here",type:"pad"},
+    {k:"tool",label:"Tool",type:"select",v:"draw",options:[["draw","Pen"],["erase","Eraser"]]},
+    {k:"brush",label:"Pen size",v:14,min:3,max:60,unit:"px",step:1},
+    {k:"clear",label:"Start over",type:"button",text:"Clear drawing"},
+    {k:"size",label:"Width of the finished shape",v:80,min:10,unit:"mm"},
+    {k:"thick",label:"Thickness",v:3,min:0.4,unit:"mm",step:0.2}],
+  build(p){
+    const nx=160, ny=120, b = brightness(padCanvas, nx, ny), h = new Float32Array(nx*ny); let count=0;
+    for (let i=0;i<h.length;i++) if (b[i] < 0.6){ h[i]=p.thick; count++; }
+    need(count>0, "Draw something on the white pad first.");
+    return [gridMesh(h,nx,ny,p.size/nx)];
+  }},
+{ id:"stl", group:"Make from…", name:"Open an STL file",
+  desc:"Open an STL file you downloaded, then change its size, turn it around or mirror it, and save a new STL. Everything stays on this computer.",
+  params:[
+    {k:"file",label:"Choose an STL file",type:"file",kind:"stl",accept:".stl"},
+    {k:"longest",label:"Make the longest side (0 = use % instead)",v:0,min:0,unit:"mm"},
+    {k:"scale",label:"Or scale by",v:100,min:1,max:1000,unit:"%",step:5},
+    {k:"rx",label:"Turn around the left-right axis",type:"select",v:"0",options:ROT},
+    {k:"ry",label:"Turn around the front-back axis",type:"select",v:"0",options:ROT},
+    {k:"rz",label:"Spin flat (around the up axis)",type:"select",v:"0",options:ROT},
+    {k:"mirror",label:"Mirror left to right",v:false,type:"bool"}],
+  build(p, A){
+    need(A && A.tris && A.tris.length, "Choose an STL file first.");
+    let tris = A.tris.map(t => t.map(v => rot(rot(rot(v,0,+p.rx),1,+p.ry),2,+p.rz)));
+    if (p.mirror) tris = tris.map(t => [[-t[0][0],t[0][1],t[0][2]],[-t[2][0],t[2][1],t[2][2]],[-t[1][0],t[1][1],t[1][2]]]);
+    let mn=[1e30,1e30,1e30], mx=[-1e30,-1e30,-1e30];
+    for (const t of tris) for (const v of t) for (let i=0;i<3;i++){ mn[i]=Math.min(mn[i],v[i]); mx[i]=Math.max(mx[i],v[i]); }
+    const longest = Math.max(mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2]);
+    need(longest > 0, "That file has no size.");
+    const f = p.longest>0 ? p.longest/longest : p.scale/100;
+    return [tris.map(t => t.map(v => [v[0]*f, v[1]*f, v[2]*f]))];
+  }}
+);
+
 /* ---------- build + STL ---------- */
 let current = SHAPES[0], values = {}, solids = [], allTris = [], bounds = null;
 
@@ -187,7 +370,7 @@ function rebuild(){
   err.textContent = ""; dl.disabled = false;
   try {
     const p = {}; for (const f of current.params) p[f.k] = values[f.k];
-    solids = current.build(p).map(orient);
+    solids = current.build(p, assets[current.id]).map(orient);
     // sit on bed, centered
     let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
     for (const s of solids) for (const t of s) for (const v of t) for (let i=0;i<3;i++){ mn[i]=Math.min(mn[i],v[i]); mx[i]=Math.max(mx[i],v[i]); }
@@ -237,7 +420,24 @@ function pickShape(sh){
     const row = document.createElement("div"); row.className = "field";
     const lab = document.createElement("label"); lab.textContent = f.label; lab.htmlFor = "f_"+f.k;
     const inp = document.createElement("input"); inp.id = "f_"+f.k;
-    if (f.type==="bool"){ inp.type="checkbox"; inp.checked=f.v; inp.onchange=()=>{values[f.k]=inp.checked; rebuild();}; row.append(lab,inp); }
+    if (f.type==="select"){
+      row.className="field wide"; const sel=document.createElement("select"); sel.id=inp.id;
+      for (const [v,t] of f.options){ const o=document.createElement("option"); o.value=v; o.textContent=t; sel.append(o); }
+      sel.value=f.v; sel.onchange=()=>{values[f.k]=sel.value; rebuild();}; row.append(lab,sel);
+    } else if (f.type==="text"){
+      row.className="field wide"; inp.type="text"; inp.value=f.v; inp.maxLength=60;
+      inp.oninput=()=>{values[f.k]=inp.value; rebuild();}; row.append(lab,inp);
+    } else if (f.type==="file"){
+      row.className="field wide"; inp.type="file"; inp.accept=f.accept; row.append(lab,inp);
+      const note=document.createElement("p"); note.className="note"; note.textContent = assets[sh.id] ? "Loaded: "+assets[sh.id].name : "Nothing chosen yet."; row.append(note);
+      inp.onchange=()=>{ const file=inp.files[0]; if(!file) return; loadFile(sh, f.kind, file, note); };
+    } else if (f.type==="pad"){
+      row.className="field wide"; row.append(lab, padCanvas);
+      const note=document.createElement("p"); note.className="note"; note.textContent="Draw with the mouse or your finger. Black becomes solid."; row.append(note);
+    } else if (f.type==="button"){
+      row.className="field wide"; const b=document.createElement("button"); b.textContent=f.text;
+      b.onclick=()=>{ const g=padCanvas.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,padCanvas.width,padCanvas.height); rebuild(); }; row.append(b);
+    } else if (f.type==="bool"){ inp.type="checkbox"; inp.checked=f.v; inp.onchange=()=>{values[f.k]=inp.checked; rebuild();}; row.append(lab,inp); }
     else {
       inp.type="number"; inp.value=f.v; inp.min=f.min; if (f.max!=null) inp.max=f.max; inp.step=f.step||1; inp.inputMode="decimal";
       inp.oninput=()=>{ const n=parseFloat(inp.value); if (isNaN(n)) return; values[f.k]=Math.min(f.max!=null?f.max:1e4, Math.max(f.min,n)); rebuild(); };
@@ -249,8 +449,35 @@ function pickShape(sh){
   }
   resetView(); rebuild();
 }
+function loadFile(sh, kind, file, note){
+  const done = data => { assets[sh.id] = Object.assign({name:file.name}, data); note.textContent = "Loaded: "+file.name; rebuild(); };
+  const fail = () => { note.textContent = "Sorry, that file could not be read."; };
+  if (kind==="image"){
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => done({img, w:img.naturalWidth, h:img.naturalHeight}); img.onerror = fail; img.src = url;
+  } else {
+    const r = new FileReader();
+    r.onload = () => { try { const tris = parseSTL(r.result); if (!tris.length) return fail(); done({tris}); } catch(e){ fail(); } };
+    r.onerror = fail; r.readAsArrayBuffer(file);
+  }
+}
 const shapesEl = document.getElementById("shapes");
-for (const sh of SHAPES){ const b=document.createElement("button"); b.textContent=sh.name; b.dataset.id=sh.id; b.onclick=()=>pickShape(sh); shapesEl.append(b); }
+let lastGroup = null;
+for (const sh of SHAPES){
+  const grp = sh.group || "Standard shapes";
+  if (grp !== lastGroup){ const h=document.createElement("div"); h.className="grp"; h.textContent=grp; shapesEl.append(h); lastGroup=grp; }
+  const b=document.createElement("button"); b.textContent=sh.name; b.dataset.id=sh.id; b.onclick=()=>pickShape(sh); shapesEl.append(b);
+}
+// drawing pad
+{ let last=null, timer=null;
+  const pt = e => { const r=padCanvas.getBoundingClientRect(); return [(e.clientX-r.left)*padCanvas.width/r.width,(e.clientY-r.top)*padCanvas.height/r.height]; };
+  const stroke = (a,b) => { const g=padCanvas.getContext("2d"); g.strokeStyle = values.tool==="erase" ? "#fff" : "#000"; g.fillStyle=g.strokeStyle;
+    g.lineWidth=values.brush||14; g.lineCap="round"; g.lineJoin="round"; g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.stroke(); };
+  const soon = () => { if (!timer) timer=setTimeout(()=>{timer=null; if (current.id==="draw") rebuild();},120); };
+  padCanvas.addEventListener("pointerdown", e=>{ last=pt(e); padCanvas.setPointerCapture(e.pointerId); stroke(last,last); soon(); });
+  padCanvas.addEventListener("pointermove", e=>{ if(!last) return; const p=pt(e); stroke(last,p); last=p; soon(); });
+  padCanvas.addEventListener("pointerup", ()=>{ last=null; if (current.id==="draw") rebuild(); });
+}
 document.getElementById("dl").onclick = download;
 
 /* ---------- preview (no libraries) ---------- */
@@ -273,8 +500,9 @@ function draw(){
   const size = Math.hypot(bounds[0],bounds[1],bounds[2]);
   const sc = Math.min(W,H)*0.8/size*zoom;
   const items = [];
-  for (const t of allTris){
-    const a=tr(t[0]), b=tr(t[1]), c=tr(t[2]);
+  const stride = Math.max(1, Math.ceil(allTris.length/120000));       // huge imported files: draw a lighter preview
+  for (let ti=0; ti<allTris.length; ti+=stride){
+    const t = allTris[ti], a=tr(t[0]), b=tr(t[1]), c=tr(t[2]);
     const n = cross(sub(b,a), sub(c,a)); const l=Math.hypot(n[0],n[1],n[2]); if (l<1e-9) continue;
     const ny = n[1]/l; if (ny > 0.02) continue;                 // facing away
     const shade = 0.35 + 0.65*Math.max(0, (-n[0]*0.3 + n[2]*0.7 - n[1]*0.6)/l);
@@ -287,7 +515,8 @@ function draw(){
     const col = `rgb(${rgb.map(c=>Math.round(c*it.s)).join(",")})`;
     cx.beginPath();
     cx.moveTo(W/2+it.a[0]*sc, H/2-it.a[2]*sc); cx.lineTo(W/2+it.b[0]*sc, H/2-it.b[2]*sc); cx.lineTo(W/2+it.c[0]*sc, H/2-it.c[2]*sc); cx.closePath();
-    cx.fillStyle=col; cx.strokeStyle=col; cx.lineWidth=0.7; cx.fill(); cx.stroke();
+    cx.fillStyle=col; cx.fill();
+    if (items.length < 30000){ cx.strokeStyle=col; cx.lineWidth=0.7; cx.stroke(); }
   }
 }
 matchMedia("(prefers-color-scheme:dark)").addEventListener("change", draw);
